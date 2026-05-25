@@ -1,0 +1,33 @@
+# Environnement
+.env
+
+# ChromaDB
+chroma_db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+bot.log
+logs/
+
+# Config locale (contient les IDs de channels)
+channels_config.json
