@@ -89,12 +89,24 @@ async def on_ready() -> None:
     logger.info("   Serveurs : %d", len(bot.guilds))
     logger.info("   ID : %s", bot.user.id if bot.user else "inconnu")
 
-    # ── Synchronisation des commandes slash ──
+    # ── Synchronisation des commandes slash par serveur (instantané) ──
+    total_synced = 0
+    for guild in bot.guilds:
+        try:
+            synced = await bot.tree.sync(guild=guild)
+            logger.info("   ✅ %d commande(s) synchronisée(s) sur %s", len(synced), guild.name)
+            total_synced += len(synced)
+        except Exception as exc:
+            logger.error("   ❌ Erreur sync sur %s : %s", guild.name, exc)
+
+    # Sync global aussi (pour les futurs serveurs)
     try:
-        synced = await bot.tree.sync()
-        logger.info("   %d commande(s) synchronisée(s)", len(synced))
+        await bot.tree.sync()
+        logger.info("   ✅ Sync global effectué")
     except Exception as exc:
-        logger.error("   ❌ Erreur de synchronisation des commandes : %s", exc)
+        logger.error("   ❌ Erreur sync global : %s", exc)
+
+    logger.info("   Total : %d commande(s) synchronisée(s)", total_synced)
 
     # ── Définir le statut du bot ──
     activity = discord.Activity(
@@ -102,6 +114,21 @@ async def on_ready() -> None:
         name="/ask • RAG Bot",
     )
     await bot.change_presence(activity=activity)
+
+
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_commands(ctx: commands.Context) -> None:
+    """Commande manuelle pour forcer la synchronisation des commandes slash."""
+    msg = await ctx.send("🔄 Synchronisation des commandes en cours...")
+    total = 0
+    for guild in bot.guilds:
+        try:
+            synced = await bot.tree.sync(guild=guild)
+            total += len(synced)
+        except Exception as exc:
+            await ctx.send(f"❌ Erreur sur {guild.name} : {exc}")
+    await msg.edit(content=f"✅ {total} commande(s) synchronisée(s) sur {len(bot.guilds)} serveur(s) !")
 
 
 @bot.event
