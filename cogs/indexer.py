@@ -150,17 +150,11 @@ class IndexerCog(commands.Cog):
             except discord.HTTPException:
                 pass
 
-    @discord.app_commands.command(
-        name="type",
-        description="Indexer une information dans la base de connaissances",
-    )
-    @discord.app_commands.describe(
-        sujet="Le sujet / catégorie de l'information (ex: Documentation, Procédure, Note...)",
-        titre="Le titre de l'information",
-        description="Une description courte du contenu",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
-    )
-    async def type_command(
+    # ─────────────────────────────────────────────
+    #  Méthode interne partagée pour l'indexation
+    # ─────────────────────────────────────────────
+
+    async def _index_info(
         self,
         interaction: discord.Interaction,
         sujet: str,
@@ -168,7 +162,7 @@ class IndexerCog(commands.Cog):
         description: str,
         fichier: discord.Attachment | None = None,
     ) -> None:
-        """Commande slash pour indexer une information avec titre, sujet et description."""
+        """Logique commune d'indexation pour toutes les commandes slash."""
         await interaction.response.defer(thinking=True)
 
         try:
@@ -205,7 +199,6 @@ class IndexerCog(commands.Cog):
             embeddings = await get_embedding(chunks)
 
             # ── Préparation des métadonnées et IDs ──
-            # Utiliser un ID unique basé sur le timestamp et l'interaction
             base_id = int(interaction.id)
             ids: list[str] = []
             metadatas: list[dict] = []
@@ -233,30 +226,93 @@ class IndexerCog(commands.Cog):
                 embeddings=embeddings,
             )
 
-            # ── Confirmation ──
+            # ── Couleurs par sujet ──
+            colors = {
+                "Note": 0xFEE75C,        # Jaune
+                "Documentation": 0x5865F2, # Bleu Discord
+                "Procédure": 0xEB459E,     # Rose
+                "Tutoriel": 0x57F287,      # Vert
+                "Info": 0xED4245,          # Rouge
+            }
+            icons = {
+                "Note": "📝",
+                "Documentation": "📚",
+                "Procédure": "📋",
+                "Tutoriel": "🎓",
+                "Info": "ℹ️",
+            }
+
             embed = discord.Embed(
-                title="✅ Information indexée",
-                color=0x57F287,
+                title=f"{icons.get(sujet, '📄')} {sujet} indexé(e)",
+                color=colors.get(sujet, 0x5865F2),
             )
-            embed.add_field(name="📁 Sujet", value=sujet, inline=True)
-            embed.add_field(name="📝 Titre", value=titre, inline=True)
-            embed.add_field(name="📄 Description", value=description[:200], inline=False)
+            embed.add_field(name="📝 Titre", value=titre, inline=False)
+            embed.add_field(name="📄 Description", value=description[:300], inline=False)
             if fichier:
                 embed.add_field(name="📎 Fichier", value=fichier.filename, inline=True)
             embed.set_footer(text=f"{len(chunks)} chunk(s) • Par {interaction.user.display_name}")
 
             await interaction.followup.send(embed=embed)
             logger.info(
-                "Commande /type : '%s' [%s] indexé — %d chunk(s) par %s",
-                titre, sujet, len(chunks), interaction.user,
+                "/%s : '%s' indexé — %d chunk(s) par %s",
+                sujet.lower(), titre, len(chunks), interaction.user,
             )
 
         except Exception as exc:
-            logger.error("Erreur /type : %s", exc, exc_info=True)
+            logger.error("Erreur indexation /%s : %s", sujet.lower(), exc, exc_info=True)
             await interaction.followup.send(
                 f"⚠️ Erreur lors de l'indexation : `{exc}`",
                 ephemeral=True,
             )
+
+    # ─────────────────────────────────────────────
+    #  Commandes slash par catégorie
+    # ─────────────────────────────────────────────
+
+    @discord.app_commands.command(name="note", description="📝 Ajouter une note à la base de connaissances")
+    @discord.app_commands.describe(
+        titre="Le titre de la note",
+        description="Le contenu de la note",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def note_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await self._index_info(interaction, "Note", titre, description, fichier)
+
+    @discord.app_commands.command(name="doc", description="📚 Ajouter une documentation à la base de connaissances")
+    @discord.app_commands.describe(
+        titre="Le titre du document",
+        description="Le contenu / résumé du document",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def doc_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await self._index_info(interaction, "Documentation", titre, description, fichier)
+
+    @discord.app_commands.command(name="procedure", description="📋 Ajouter une procédure à la base de connaissances")
+    @discord.app_commands.describe(
+        titre="Le titre de la procédure",
+        description="Les étapes / le contenu de la procédure",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def procedure_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await self._index_info(interaction, "Procédure", titre, description, fichier)
+
+    @discord.app_commands.command(name="tuto", description="🎓 Ajouter un tutoriel à la base de connaissances")
+    @discord.app_commands.describe(
+        titre="Le titre du tutoriel",
+        description="Le contenu du tutoriel",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def tuto_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await self._index_info(interaction, "Tutoriel", titre, description, fichier)
+
+    @discord.app_commands.command(name="info", description="ℹ️ Ajouter une info à la base de connaissances")
+    @discord.app_commands.describe(
+        titre="Le titre de l'information",
+        description="Le contenu de l'information",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def info_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await self._index_info(interaction, "Info", titre, description, fichier)
 
 
 async def setup(bot: commands.Bot) -> None:
