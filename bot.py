@@ -93,6 +93,7 @@ async def on_ready() -> None:
     total_synced = 0
     for guild in bot.guilds:
         try:
+            bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
             logger.info("   ✅ %d commande(s) synchronisée(s) sur %s", len(synced), guild.name)
             total_synced += len(synced)
@@ -124,6 +125,7 @@ async def sync_commands(ctx: commands.Context) -> None:
     total = 0
     for guild in bot.guilds:
         try:
+            bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
             total += len(synced)
         except Exception as exc:
