@@ -150,6 +150,114 @@ class IndexerCog(commands.Cog):
             except discord.HTTPException:
                 pass
 
+    @discord.app_commands.command(
+        name="type",
+        description="Indexer une information dans la base de connaissances",
+    )
+    @discord.app_commands.describe(
+        sujet="Le sujet / catégorie de l'information (ex: Documentation, Procédure, Note...)",
+        titre="Le titre de l'information",
+        description="Une description courte du contenu",
+        fichier="Un fichier à joindre (PDF, image, texte...)",
+    )
+    async def type_command(
+        self,
+        interaction: discord.Interaction,
+        sujet: str,
+        titre: str,
+        description: str,
+        fichier: discord.Attachment | None = None,
+    ) -> None:
+        """Commande slash pour indexer une information avec titre, sujet et description."""
+        await interaction.response.defer(thinking=True)
+
+        try:
+            content = description
+
+            # ── Traitement du fichier joint ──
+            if fichier is not None:
+                if is_supported_attachment(fichier.filename):
+                    extracted = await extract_text_from_attachment(fichier)
+                    if extracted:
+                        content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{extracted}"
+                else:
+                    await interaction.followup.send(
+                        f"⚠️ Format de fichier non supporté : `{fichier.filename}`",
+                        ephemeral=True,
+                    )
+                    return
+
+            # ── Construction du texte complet ──
+            timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            full_text = build_document_text(
+                category=sujet,
+                title=titre,
+                content=content,
+                author=str(interaction.user),
+                channel=interaction.channel.name if interaction.channel else "inconnu",
+                timestamp=timestamp_str,
+            )
+
+            # ── Découpage en chunks ──
+            chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+
+            # ── Génération des embeddings ──
+            embeddings = await get_embedding(chunks)
+
+            # ── Préparation des métadonnées et IDs ──
+            # Utiliser un ID unique basé sur le timestamp et l'interaction
+            base_id = int(interaction.id)
+            ids: list[str] = []
+            metadatas: list[dict] = []
+
+            for idx, _chunk in enumerate(chunks):
+                doc_id = generate_doc_id(base_id, chunk_index=idx)
+                ids.append(doc_id)
+                metadatas.append({
+                    "message_id": str(interaction.id),
+                    "channel_id": str(interaction.channel_id),
+                    "author": str(interaction.user),
+                    "category": sujet,
+                    "title": titre,
+                    "timestamp": timestamp_str,
+                    "has_attachment": fichier is not None,
+                    "chunk_index": idx,
+                    "total_chunks": len(chunks),
+                })
+
+            # ── Stockage dans ChromaDB ──
+            self.vector_store.add_documents(
+                texts=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                embeddings=embeddings,
+            )
+
+            # ── Confirmation ──
+            embed = discord.Embed(
+                title="✅ Information indexée",
+                color=0x57F287,
+            )
+            embed.add_field(name="📁 Sujet", value=sujet, inline=True)
+            embed.add_field(name="📝 Titre", value=titre, inline=True)
+            embed.add_field(name="📄 Description", value=description[:200], inline=False)
+            if fichier:
+                embed.add_field(name="📎 Fichier", value=fichier.filename, inline=True)
+            embed.set_footer(text=f"{len(chunks)} chunk(s) • Par {interaction.user.display_name}")
+
+            await interaction.followup.send(embed=embed)
+            logger.info(
+                "Commande /type : '%s' [%s] indexé — %d chunk(s) par %s",
+                titre, sujet, len(chunks), interaction.user,
+            )
+
+        except Exception as exc:
+            logger.error("Erreur /type : %s", exc, exc_info=True)
+            await interaction.followup.send(
+                f"⚠️ Erreur lors de l'indexation : `{exc}`",
+                ephemeral=True,
+            )
+
 
 async def setup(bot: commands.Bot) -> None:
     """Point d'entrée pour charger le cog d'indexation."""
