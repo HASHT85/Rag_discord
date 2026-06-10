@@ -6,6 +6,7 @@ pour les embeddings et la génération de réponses LLM.
 """
 
 import asyncio
+import base64
 import logging
 from typing import Optional
 
@@ -200,3 +201,91 @@ async def generate_answer(question: str, context: str) -> str:
     )
 
     return answer.strip()
+
+
+async def describe_image(image_data: bytes, filename: str = "image.png") -> str | None:
+    """
+    Décrit une image en utilisant la capacité vision du LLM.
+
+    Envoie l'image au modèle Gemini Flash via OpenRouter pour obtenir
+    une description textuelle détaillée, utilisable pour l'indexation RAG.
+
+    Args:
+        image_data: Contenu brut de l'image en bytes.
+        filename: Nom du fichier image (pour déterminer le type MIME).
+
+    Returns:
+        Description textuelle de l'image, ou None en cas d'erreur.
+    """
+    # Déterminer le type MIME
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+    mime_map = {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "bmp": "image/bmp",
+    }
+    mime_type = mime_map.get(ext, "image/png")
+
+    # Encoder en base64
+    b64_image = base64.b64encode(image_data).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64_image}"
+
+    logger.debug("🖼️ Description d'image '%s' (%s, %d octets)...", filename, mime_type, len(image_data))
+
+    system_prompt = (
+        "Tu es un assistant spécialisé dans la description d'images. "
+        "Décris l'image de manière détaillée et structurée en français. "
+        "Inclus :\n"
+        "- Le contenu principal de l'image\n"
+        "- Tout texte visible (retranscris-le exactement)\n"
+        "- Les éléments visuels importants (schémas, graphiques, tableaux, etc.)\n"
+        "- Le contexte ou la nature du document si identifiable\n\n"
+        "Sois exhaustif, car cette description sera utilisée pour retrouver "
+        "l'image par recherche textuelle."
+    )
+
+    async def _call():
+        response = await _client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        },
+                        {
+                            "type": "text",
+                            "text": "Décris cette image en détail.",
+                        },
+                    ],
+                },
+            ],
+            temperature=0.2,
+            max_tokens=1500,
+        )
+        return response
+
+    try:
+        response = await _retry_with_backoff(_call, description="description image")
+        description = response.choices[0].message.content or ""
+        description = description.strip()
+
+        if description:
+            logger.info(
+                "✅ Image '%s' décrite (%d caractères).",
+                filename, len(description),
+            )
+            return description
+
+        logger.warning("⚠️ Description vide pour l'image '%s'.", filename)
+        return None
+
+    except Exception as e:
+        logger.error("❌ Erreur lors de la description de '%s' : %s", filename, e)
+        return None

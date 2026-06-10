@@ -2,7 +2,7 @@
 Traitement des pièces jointes Discord.
 
 Télécharge et extrait le texte des fichiers joints aux messages
-Discord (PDF, fichiers texte) pour l'indexation RAG.
+Discord (PDF, fichiers texte, images) pour l'indexation RAG.
 """
 
 import io
@@ -28,8 +28,13 @@ _TEXT_EXTENSIONS: set[str] = {
     ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts",
 }
 
-# Toutes les extensions supportées (texte + PDF)
-_SUPPORTED_EXTENSIONS: set[str] = _TEXT_EXTENSIONS | {".pdf"}
+# Extensions d'images supportées (décrites par le LLM vision)
+_IMAGE_EXTENSIONS: set[str] = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+}
+
+# Toutes les extensions supportées (texte + PDF + images)
+_SUPPORTED_EXTENSIONS: set[str] = _TEXT_EXTENSIONS | {".pdf"} | _IMAGE_EXTENSIONS
 
 
 def is_supported_attachment(filename: str) -> bool:
@@ -209,6 +214,8 @@ async def extract_text_from_attachment(
     # Extraire le texte selon le type de fichier
     if ext == ".pdf":
         text = _extract_text_from_pdf(data)
+    elif ext in _IMAGE_EXTENSIONS:
+        text = await _describe_image_with_llm(data, filename)
     elif ext in _TEXT_EXTENSIONS:
         text = _extract_text_from_text_file(data, filename)
     else:
@@ -223,3 +230,30 @@ async def extract_text_from_attachment(
         logger.warning("⚠️ Aucun texte extrait de '%s'.", filename)
 
     return text
+
+
+async def _describe_image_with_llm(data: bytes, filename: str) -> str | None:
+    """
+    Décrit une image via le LLM vision (Gemini Flash).
+
+    Args:
+        data: Contenu brut de l'image en bytes.
+        filename: Nom du fichier image.
+
+    Returns:
+        Description textuelle de l'image, ou None en cas d'erreur.
+    """
+    from services.openrouter_client import describe_image
+
+    try:
+        description = await describe_image(data, filename)
+        if description:
+            logger.info(
+                "🖼️ Image '%s' décrite par le LLM (%d caractères).",
+                filename, len(description),
+            )
+            return f"[Image : {filename}]\n{description}"
+        return None
+    except Exception as e:
+        logger.error("❌ Erreur description image '%s' : %s", filename, e)
+        return None
