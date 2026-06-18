@@ -45,6 +45,8 @@ def init_firebase() -> firestore.firestore.Client:
                 import json
                 cred_json = base64.b64decode(cred_b64).decode("utf-8")
                 cred_dict = json.loads(cred_json)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 return firestore.client()
