@@ -11,12 +11,11 @@ venv/
 .venv/
 env/
 
-# App data, database, and logs (persisted via volumes)
-chroma_db/
+# Logs
 logs/
-data/
 
 # Configuration and secrets
 .env
 .env.example
 channels_config.json
+serviceAccountKey.json

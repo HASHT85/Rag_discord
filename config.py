@@ -5,9 +5,11 @@ Charge les variables d'environnement et expose les constantes.
 
 import os
 import sys
-import json
 from pathlib import Path
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
 
 # Charger le .env depuis la racine du projet
 load_dotenv(Path(__file__).parent / ".env")
@@ -27,10 +29,27 @@ EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "google/gemini-embedding-2-p
 OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 # ─────────────────────────────────────────────
-#  ChromaDB
+#  Firebase & Firestore
 # ─────────────────────────────────────────────
-CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-COLLECTION_NAME: str = "discord_rag"
+FIREBASE_CREDENTIALS_PATH: str = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.json")
+COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "discord_rag")
+
+def init_firebase() -> firestore.firestore.Client:
+    """Initialise l'application Firebase et retourne le client Firestore."""
+    if not firebase_admin._apps:
+        if os.path.exists(FIREBASE_CREDENTIALS_PATH):
+            cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+            firebase_admin.initialize_app(cred)
+        else:
+            try:
+                firebase_admin.initialize_app()
+            except Exception as exc:
+                print("❌ Impossible d'initialiser Firebase. Assurez-vous d'avoir configuré le fichier serviceAccountKey.json ou les credentials par défaut.")
+                print(f"   Erreur détaillée : {exc}")
+                sys.exit(1)
+    return firestore.client()
+
+db = init_firebase()
 
 # ─────────────────────────────────────────────
 #  Paramètres RAG
@@ -39,31 +58,29 @@ TOP_K: int = int(os.getenv("TOP_K", "5"))
 CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))
 CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
 
-# ─────────────────────────────────────────────
-#  Fichier de persistance des channels configurés
-# ─────────────────────────────────────────────
-CHANNELS_CONFIG_FILE: str = os.path.join(
-    os.path.dirname(__file__), "data", "channels_config.json"
-)
-
 
 def load_channels_config() -> dict:
-    """Charge la configuration des channels (input/output) depuis le fichier JSON."""
-    if os.path.exists(CHANNELS_CONFIG_FILE):
-        with open(CHANNELS_CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+    """Charge la configuration des channels (input/output) depuis Firestore."""
+    try:
+        doc_ref = db.collection("bot_config").document("channels")
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()
+    except Exception as exc:
+        print(f"⚠️ Erreur lors du chargement de la config depuis Firestore : {exc}")
     return {"input_channel_id": None, "output_channel_id": None}
 
 
 def save_channels_config(input_channel_id: int | None, output_channel_id: int | None) -> None:
-    """Sauvegarde la configuration des channels dans le fichier JSON."""
-    os.makedirs(os.path.dirname(CHANNELS_CONFIG_FILE), exist_ok=True)
-    data = {
-        "input_channel_id": input_channel_id,
-        "output_channel_id": output_channel_id,
-    }
-    with open(CHANNELS_CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    """Sauvegarde la configuration des channels dans Firestore."""
+    try:
+        doc_ref = db.collection("bot_config").document("channels")
+        doc_ref.set({
+            "input_channel_id": input_channel_id,
+            "output_channel_id": output_channel_id,
+        })
+    except Exception as exc:
+        print(f"❌ Erreur lors de la sauvegarde de la config dans Firestore : {exc}")
 
 
 def validate_config() -> None:

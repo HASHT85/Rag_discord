@@ -10,8 +10,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copier le code source
 COPY . .
 
-# Créer le dossier pour ChromaDB
-RUN mkdir -p /app/chroma_db
-
 # Lancer le bot
 CMD ["python", "bot.py"]

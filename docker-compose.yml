@@ -6,17 +6,12 @@ services:
     env_file:
       - .env
     volumes:
-      # Persister les données ChromaDB
-      - chroma_data:/app/chroma_db
+      # Clé de compte de service Firebase (obligatoire pour Firestore)
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json
       # Persister les logs sur l'hôte
       - ./logs:/app/logs
-      # Persister la configuration des salons (channels)
-      - ./data:/app/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  chroma_data:

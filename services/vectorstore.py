@@ -1,47 +1,41 @@
 """
-Wrapper autour de ChromaDB pour le stockage et la recherche de vecteurs.
+Wrapper autour de Firestore pour le stockage et la recherche de vecteurs.
 
-Gère la persistance locale des embeddings et fournit une interface
+Gère la persistance cloud des embeddings et fournit une interface
 simple pour l'ajout, la recherche et la suppression de documents.
 """
 
 import logging
 from typing import Any
 
-import chromadb
+from google.api_core.exceptions import FailedPrecondition
+from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+from google.cloud.firestore_v1.vector import Vector
+from firebase_admin import firestore
 
-from config import CHROMA_PERSIST_DIR, COLLECTION_NAME, TOP_K
+from config import db, COLLECTION_NAME, TOP_K
 
 logger = logging.getLogger(__name__)
 
 
 class VectorStore:
     """
-    Gestionnaire du vectorstore ChromaDB.
+    Gestionnaire du vectorstore Firestore.
 
-    Encapsule un client persistant ChromaDB et fournit des méthodes
+    Encapsule un client Firestore et fournit des méthodes
     pour manipuler les documents et leurs embeddings.
     """
 
     def __init__(self) -> None:
         """
-        Initialise le client ChromaDB et récupère ou crée la collection.
+        Initialise le client Firestore et la collection.
         """
         logger.info(
-            "🗄️ Initialisation de ChromaDB (dossier=%s, collection=%s)...",
-            CHROMA_PERSIST_DIR, COLLECTION_NAME,
+            "🗄️ Initialisation de Firestore (collection=%s)...",
+            COLLECTION_NAME,
         )
-
-        self._client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
-        self._collection = self._client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
-
-        count = self._collection.count()
-        logger.info(
-            "✅ VectorStore prêt — %d document(s) existant(s).", count
-        )
+        self._collection = db.collection(COLLECTION_NAME)
+        logger.info("✅ Firestore VectorStore prêt.")
 
     def add_documents(
         self,
@@ -51,22 +45,12 @@ class VectorStore:
         embeddings: list[list[float]],
     ) -> None:
         """
-        Ajoute des documents avec leurs embeddings pré-calculés.
-
-        Args:
-            texts: Liste des textes des documents.
-            metadatas: Liste des métadonnées associées à chaque document.
-            ids: Liste des identifiants uniques de chaque document.
-            embeddings: Liste des vecteurs d'embedding pré-calculés.
-
-        Raises:
-            ValueError: Si les listes n'ont pas la même longueur.
+        Ajoute des documents avec leurs embeddings pré-calculés dans Firestore.
         """
         if not texts:
             logger.warning("⚠️ Aucun document à ajouter.")
             return
 
-        # Vérification de cohérence des tailles
         lengths = {
             "texts": len(texts),
             "metadatas": len(metadatas),
@@ -79,14 +63,25 @@ class VectorStore:
                 f"Les listes doivent avoir la même taille : {lengths}"
             )
 
-        logger.debug("📥 Ajout de %d document(s) au vectorstore...", len(texts))
+        logger.debug("📥 Ajout de %d document(s) à Firestore...", len(texts))
 
-        self._collection.add(
-            documents=texts,
-            metadatas=metadatas,  # type: ignore[arg-type]
-            ids=ids,
-            embeddings=embeddings,  # type: ignore[arg-type]
-        )
+        batch = db.batch()
+        for i, (text, metadata, doc_id, embedding) in enumerate(zip(texts, metadatas, ids, embeddings)):
+            doc_ref = self._collection.document(doc_id)
+            batch.set(doc_ref, {
+                "text": text,
+                "embedding": Vector(embedding),
+                "metadata": metadata,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            })
+
+            # Firestore limite les batchs à 500 écritures
+            if (i + 1) % 500 == 0:
+                batch.commit()
+                batch = db.batch()
+
+        if len(texts) % 500 != 0:
+            batch.commit()
 
         logger.info("✅ %d document(s) ajouté(s) avec succès.", len(texts))
 
@@ -96,51 +91,72 @@ class VectorStore:
         n_results: int = TOP_K,
     ) -> dict[str, Any]:
         """
-        Effectue une recherche par similarité cosinus.
-
-        Args:
-            query_embedding: Le vecteur d'embedding de la requête.
-            n_results: Nombre maximum de résultats à retourner.
-
-        Returns:
-            Dictionnaire contenant les clés 'ids', 'documents',
-            'metadatas' et 'distances'.
+        Effectue une recherche par similarité cosinus dans Firestore.
         """
         logger.debug(
-            "🔍 Recherche de similarité (top_k=%d)...", n_results
+            "🔍 Recherche de similarité Firestore (top_k=%d)...", n_results
         )
 
-        results = self._collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            vector_query = self._collection.find_nearest(
+                vector_field="embedding",
+                query_vector=Vector(query_embedding),
+                distance_measure=DistanceMeasure.COSINE,
+                limit=n_results,
+                distance_result_field="vector_distance"
+            )
 
-        nb_found = len(results["ids"][0]) if results["ids"] else 0
-        logger.info("✅ %d résultat(s) trouvé(s).", nb_found)
+            docs = vector_query.stream()
 
-        return {
-            "ids": results["ids"][0] if results["ids"] else [],
-            "documents": results["documents"][0] if results["documents"] else [],
-            "metadatas": results["metadatas"][0] if results["metadatas"] else [],
-            "distances": results["distances"][0] if results["distances"] else [],
-        }
+            ids = []
+            documents = []
+            metadatas = []
+            distances = []
+
+            for doc in docs:
+                data = doc.to_dict()
+                ids.append(doc.id)
+                documents.append(data.get("text", ""))
+                metadatas.append(data.get("metadata", {}))
+                
+                # Récupérer la distance retournée
+                distance = data.get("vector_distance", 0.0)
+                distances.append(distance)
+
+            logger.info("✅ %d résultat(s) trouvé(s).", len(ids))
+
+            return {
+                "ids": ids,
+                "documents": documents,
+                "metadatas": metadatas,
+                "distances": distances,
+            }
+
+        except FailedPrecondition as exc:
+            logger.error("❌ L'index vectoriel Firestore est requis.")
+            logger.error("👉 Vous devez le créer en cliquant sur le lien suivant dans votre console Firebase :")
+            logger.error("   %s", exc.message)
+            raise exc
+        except Exception as exc:
+            logger.error("❌ Erreur lors de la recherche vectorielle : %s", exc, exc_info=True)
+            raise exc
 
     def get_stats(self) -> dict[str, Any]:
         """
-        Retourne des statistiques sur le vectorstore.
-
-        Returns:
-            Dictionnaire avec le nombre de documents et les infos de collection.
+        Retourne des statistiques sur le vectorstore Firestore.
         """
-        count = self._collection.count()
-        metadata = self._collection.metadata
+        try:
+            alias = "count"
+            count_query = self._collection.count(alias=alias)
+            results = count_query.get()
+            count = results[0].get(alias)
+        except Exception as exc:
+            logger.warning("Impossible de récupérer le nombre de documents : %s", exc)
+            count = -1
 
         stats = {
             "total_documents": count,
             "collection_name": COLLECTION_NAME,
-            "persist_directory": CHROMA_PERSIST_DIR,
-            "collection_metadata": metadata,
         }
 
         logger.debug("📊 Stats vectorstore : %s", stats)
@@ -149,46 +165,35 @@ class VectorStore:
     def delete_by_metadata(self, key: str, value: str) -> None:
         """
         Supprime tous les documents dont une métadonnée correspond au filtre.
-
-        Args:
-            key: Clé de métadonnée à filtrer.
-            value: Valeur attendue pour la suppression.
         """
         logger.debug(
-            "🗑️ Suppression des documents où %s='%s'...", key, value
+            "🗑️ Suppression des documents où metadata.%s='%s'...", key, value
         )
 
-        # Récupérer les IDs correspondants via un filtre where
-        results = self._collection.get(
-            where={key: value},
-            include=[],
-        )
+        query = self._collection.where(f"metadata.{key}", "==", value)
+        docs = query.stream()
 
-        ids_to_delete = results["ids"]
-        if not ids_to_delete:
-            logger.info("ℹ️ Aucun document trouvé pour %s='%s'.", key, value)
-            return
+        batch = db.batch()
+        count = 0
+        for doc in docs:
+            batch.delete(doc.reference)
+            count += 1
+            if count % 500 == 0:
+                batch.commit()
+                batch = db.batch()
 
-        self._collection.delete(ids=ids_to_delete)
+        if count % 500 != 0:
+            batch.commit()
+
         logger.info(
-            "✅ %d document(s) supprimé(s) (filtre: %s='%s').",
-            len(ids_to_delete), key, value,
+            "✅ %d document(s) supprimé(s) (filtre: metadata.%s='%s').",
+            count, key, value,
         )
 
     def document_exists(self, doc_id: str) -> bool:
         """
         Vérifie si un document avec l'identifiant donné existe déjà.
-
-        Args:
-            doc_id: Identifiant unique du document.
-
-        Returns:
-            True si le document existe, False sinon.
         """
-        results = self._collection.get(ids=[doc_id], include=[])
-        exists = len(results["ids"]) > 0
-
-        logger.debug(
-            "🔎 Document '%s' existe : %s", doc_id, exists
-        )
-        return exists
+        doc_ref = self._collection.document(doc_id)
+        doc = doc_ref.get()
+        return doc.exists
