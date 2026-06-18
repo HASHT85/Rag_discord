@@ -25,7 +25,7 @@ OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 #  Modèles OpenRouter
 # ─────────────────────────────────────────────
 LLM_MODEL: str = os.getenv("LLM_MODEL", "google/gemini-3.1-flash-lite")
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "google/gemini-embedding-2-preview")
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-small")
 OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 # ─────────────────────────────────────────────
