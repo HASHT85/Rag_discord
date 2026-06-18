@@ -37,7 +37,22 @@ COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "discord_rag")
 def init_firebase() -> firestore.firestore.Client:
     """Initialise l'application Firebase et retourne le client Firestore."""
     if not firebase_admin._apps:
-        # 1. Vérifier si les credentials sont fournis sous forme de chaîne JSON
+        # 1. Vérifier si les credentials sont fournis sous forme de base64 (recommandé pour éviter la corruption)
+        cred_b64 = os.getenv("FIREBASE_CREDENTIALS_BASE64")
+        if cred_b64:
+            try:
+                import base64
+                import json
+                cred_json = base64.b64decode(cred_b64).decode("utf-8")
+                cred_dict = json.loads(cred_json)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                return firestore.client()
+            except Exception as exc:
+                print(f"❌ Erreur lors de l'initialisation de Firebase via base64 : {exc}")
+                sys.exit(1)
+
+        # 2. Vérifier si les credentials sont fournis sous forme de chaîne JSON
         cred_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
         if cred_json:
             try:
@@ -50,10 +65,6 @@ def init_firebase() -> firestore.firestore.Client:
                     if '\x08' in pk:
                         pk = pk.replace('\x08', '\nb')
                     pk = pk.replace("\\n", "\n")
-                    import hashlib
-                    h = hashlib.sha256(pk.encode('utf-8')).hexdigest()
-                    print(f"DEBUG VPS KEY: len={len(pk)}, SHA256={h}")
-                    print(f"DEBUG VPS KEY REPR: {repr(pk)}")
                     cred_dict["private_key"] = pk
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
@@ -62,7 +73,7 @@ def init_firebase() -> firestore.firestore.Client:
                 print(f"❌ Erreur lors de l'initialisation de Firebase via la variable JSON : {exc}")
                 sys.exit(1)
 
-        # 2. Sinon, essayer le fichier local
+        # 3. Sinon, essayer le fichier local
         if os.path.exists(FIREBASE_CREDENTIALS_PATH):
             cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
             firebase_admin.initialize_app(cred)
@@ -70,7 +81,7 @@ def init_firebase() -> firestore.firestore.Client:
             try:
                 firebase_admin.initialize_app()
             except Exception as exc:
-                print("❌ Impossible d'initialiser Firebase. Assurez-vous d'avoir configuré la variable FIREBASE_CREDENTIALS_JSON ou le fichier serviceAccountKey.json.")
+                print("❌ Impossible d'initialiser Firebase. Assurez-vous d'avoir configuré la variable FIREBASE_CREDENTIALS_BASE64, FIREBASE_CREDENTIALS_JSON ou le fichier serviceAccountKey.json.")
                 print(f"   Erreur détaillée : {exc}")
                 sys.exit(1)
     return firestore.client()
