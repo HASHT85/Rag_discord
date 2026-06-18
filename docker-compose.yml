@@ -6,8 +6,6 @@ services:
     env_file:
       - .env
     volumes:
-      # Clé de compte de service Firebase (obligatoire pour Firestore)
-      - ./serviceAccountKey.json:/app/serviceAccountKey.json
       # Persister les logs sur l'hôte
       - ./logs:/app/logs
     logging:

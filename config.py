@@ -37,6 +37,20 @@ COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "discord_rag")
 def init_firebase() -> firestore.firestore.Client:
     """Initialise l'application Firebase et retourne le client Firestore."""
     if not firebase_admin._apps:
+        # 1. Vérifier si les credentials sont fournis sous forme de chaîne JSON
+        cred_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
+        if cred_json:
+            try:
+                import json
+                cred_dict = json.loads(cred_json)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                return firestore.client()
+            except Exception as exc:
+                print(f"❌ Erreur lors de l'initialisation de Firebase via la variable JSON : {exc}")
+                sys.exit(1)
+
+        # 2. Sinon, essayer le fichier local
         if os.path.exists(FIREBASE_CREDENTIALS_PATH):
             cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
             firebase_admin.initialize_app(cred)
@@ -44,7 +58,7 @@ def init_firebase() -> firestore.firestore.Client:
             try:
                 firebase_admin.initialize_app()
             except Exception as exc:
-                print("❌ Impossible d'initialiser Firebase. Assurez-vous d'avoir configuré le fichier serviceAccountKey.json ou les credentials par défaut.")
+                print("❌ Impossible d'initialiser Firebase. Assurez-vous d'avoir configuré la variable FIREBASE_CREDENTIALS_JSON ou le fichier serviceAccountKey.json.")
                 print(f"   Erreur détaillée : {exc}")
                 sys.exit(1)
     return firestore.client()
