@@ -129,6 +129,7 @@ async def get_embedding(texts: list[str]) -> list[list[float]]:
         response = await _client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=texts,
+            encoding_format="float",
         )
         return response
 
