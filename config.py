@@ -50,6 +50,9 @@ def init_firebase() -> firestore.firestore.Client:
                     if '\x08' in pk:
                         pk = pk.replace('\x08', '\nb')
                     pk = pk.replace("\\n", "\n")
+                    import hashlib
+                    h = hashlib.sha256(pk.encode('utf-8')).hexdigest()
+                    print(f"DEBUG VPS KEY: len={len(pk)}, SHA256={h}")
                     cred_dict["private_key"] = pk
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
