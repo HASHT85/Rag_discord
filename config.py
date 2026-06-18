@@ -44,7 +44,13 @@ def init_firebase() -> firestore.firestore.Client:
                 import json
                 cred_dict = json.loads(cred_json)
                 if "private_key" in cred_dict:
-                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                    pk = cred_dict["private_key"]
+                    print(f"DEBUG VPS KEY: len={len(pk)}, newlines={pk.count('\n')}, backspaces={pk.count('\x08')}")
+                    # Find backspace and print context
+                    if '\x08' in pk:
+                        idx = pk.index('\x08')
+                        print(f"DEBUG VPS KEY: Backspace at {idx}. Context: {repr(pk[max(0, idx-15):idx+15])}")
+                    cred_dict["private_key"] = pk.replace("\\n", "\n")
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 return firestore.client()
