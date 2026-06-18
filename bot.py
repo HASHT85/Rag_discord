@@ -89,7 +89,9 @@ async def on_ready() -> None:
     logger.info("   Serveurs : %d", len(bot.guilds))
     logger.info("   ID : %s", bot.user.id if bot.user else "inconnu")
 
-    # ── Synchronisation des commandes slash par serveur (instantané) ──
+    # ── Synchronisation locale des commandes slash (instantanée) ──
+    # Note : On ne synchronise plus globalement ici pour éviter les doublons.
+    # Pour nettoyer les doublons existants, utilisez la commande préfixée `!sync guild`.
     total_synced = 0
     for guild in bot.guilds:
         try:
@@ -100,14 +102,7 @@ async def on_ready() -> None:
         except Exception as exc:
             logger.error("   ❌ Erreur sync sur %s : %s", guild.name, exc)
 
-    # Sync global aussi (pour les futurs serveurs)
-    try:
-        await bot.tree.sync()
-        logger.info("   ✅ Sync global effectué")
-    except Exception as exc:
-        logger.error("   ❌ Erreur sync global : %s", exc)
-
-    logger.info("   Total : %d commande(s) synchronisée(s)", total_synced)
+    logger.info("   Total : %d commande(s) synchronisée(s) localement", total_synced)
 
     # ── Définir le statut du bot ──
     activity = discord.Activity(
@@ -119,18 +114,57 @@ async def on_ready() -> None:
 
 @bot.command(name="sync")
 @commands.is_owner()
-async def sync_commands(ctx: commands.Context) -> None:
-    """Commande manuelle pour forcer la synchronisation des commandes slash."""
-    msg = await ctx.send("🔄 Synchronisation des commandes en cours...")
-    total = 0
-    for guild in bot.guilds:
-        try:
-            bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            total += len(synced)
-        except Exception as exc:
-            await ctx.send(f"❌ Erreur sur {guild.name} : {exc}")
-    await msg.edit(content=f"✅ {total} commande(s) synchronisée(s) sur {len(bot.guilds)} serveur(s) !")
+async def sync_commands(ctx: commands.Context, scope: str = "guild") -> None:
+    """Commande manuelle pour forcer la synchronisation des commandes slash.
+    Usage:
+      !sync guild   -> Enregistre localement sur chaque serveur et supprime les globales (Recommandé)
+      !sync global  -> Enregistre globalement et supprime les commandes locales
+      !sync clear   -> Supprime toutes les commandes (globales et locales)
+    """
+    msg = await ctx.send("🔄 Synchronisation et nettoyage en cours...")
+    
+    try:
+        if scope == "guild":
+            # 1. Nettoyer les commandes globales de Discord pour ce bot
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+            
+            # 2. Copier et synchroniser sur chaque serveur
+            total = 0
+            for guild in bot.guilds:
+                bot.tree.copy_global_to(guild=guild)
+                synced = await bot.tree.sync(guild=guild)
+                total += len(synced)
+            await msg.edit(content=f"✅ Commandes synchronisées LOCALEMENT ({total} au total sur {len(bot.guilds)} serveurs). Les commandes globales ont été nettoyées pour éviter les doublons.")
+            
+        elif scope == "global":
+            # 1. Nettoyer les commandes locales (guild) sur tous les serveurs
+            for guild in bot.guilds:
+                bot.tree.clear_commands(guild=guild)
+                await bot.tree.sync(guild=guild)
+            
+            # 2. Synchroniser globalement
+            synced = await bot.tree.sync()
+            await msg.edit(content=f"✅ Commandes synchronisées GLOBALEMENT ({len(synced)} commandes). Les commandes locales ont été nettoyées.")
+            
+        elif scope == "clear":
+            # Nettoyer globales
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+            
+            # Nettoyer locales
+            for guild in bot.guilds:
+                bot.tree.clear_commands(guild=guild)
+                await bot.tree.sync(guild=guild)
+                
+            await msg.edit(content="✅ Toutes les commandes (globales et locales) ont été supprimées.")
+            
+        else:
+            await msg.edit(content="❌ Scope invalide. Utilisez `guild`, `global` ou `clear`.")
+            
+    except Exception as exc:
+        logger.error("Erreur lors de la synchronisation : %s", exc, exc_info=True)
+        await msg.edit(content=f"❌ Erreur lors de la synchronisation : {exc}")
 
 
 @bot.event
