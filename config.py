@@ -53,6 +53,7 @@ def init_firebase() -> firestore.firestore.Client:
                     import hashlib
                     h = hashlib.sha256(pk.encode('utf-8')).hexdigest()
                     print(f"DEBUG VPS KEY: len={len(pk)}, SHA256={h}")
+                    print(f"DEBUG VPS KEY REPR: {repr(pk)}")
                     cred_dict["private_key"] = pk
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
