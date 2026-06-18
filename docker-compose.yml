@@ -1,5 +1,5 @@
 services:
-  # Force rebuild: v1.0.3
+  # Force rebuild: v1.0.4
   discord-rag-bot:
     build: .
     container_name: discord-rag-bot
