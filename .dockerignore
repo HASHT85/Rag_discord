@@ -1,0 +1,22 @@
+# Git
+.git/
+.gitignore
+
+# Python env and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+
+# App data, database, and logs (persisted via volumes)
+chroma_db/
+logs/
+data/
+
+# Configuration and secrets
+.env
+.env.example
+channels_config.json

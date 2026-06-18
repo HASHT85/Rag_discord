@@ -43,7 +43,7 @@ CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
 #  Fichier de persistance des channels configurés
 # ─────────────────────────────────────────────
 CHANNELS_CONFIG_FILE: str = os.path.join(
-    os.path.dirname(__file__), "channels_config.json"
+    os.path.dirname(__file__), "data", "channels_config.json"
 )
 
 
@@ -57,6 +57,7 @@ def load_channels_config() -> dict:
 
 def save_channels_config(input_channel_id: int | None, output_channel_id: int | None) -> None:
     """Sauvegarde la configuration des channels dans le fichier JSON."""
+    os.makedirs(os.path.dirname(CHANNELS_CONFIG_FILE), exist_ok=True)
     data = {
         "input_channel_id": input_channel_id,
         "output_channel_id": output_channel_id,

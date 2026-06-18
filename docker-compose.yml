@@ -10,6 +10,8 @@ services:
       - chroma_data:/app/chroma_db
       # Persister les logs sur l'hôte
       - ./logs:/app/logs
+      # Persister la configuration des salons (channels)
+      - ./data:/app/data
     logging:
       driver: "json-file"
       options:
