@@ -12,7 +12,7 @@ from typing import Optional
 
 from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
 
-from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODEL, EMBEDDING_MODEL
+from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODEL, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -126,11 +126,14 @@ async def get_embedding(texts: list[str]) -> list[list[float]]:
     logger.debug("📐 Génération d'embeddings pour %d texte(s)...", len(texts))
 
     async def _call():
-        response = await _client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=texts,
-            encoding_format="float",
-        )
+        params = {
+            "model": EMBEDDING_MODEL,
+            "input": texts,
+            "encoding_format": "float",
+        }
+        if EMBEDDING_DIMENSIONS > 0:
+            params["extra_body"] = {"dimensions": EMBEDDING_DIMENSIONS}
+        response = await _client.embeddings.create(**params)
         return response
 
     response = await _retry_with_backoff(_call, description="embedding")
