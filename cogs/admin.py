@@ -56,7 +56,6 @@ class AdminCog(commands.Cog):
         input_channel="Canal d'entrée pour l'indexation des documents",
         output_channel="Canal de sortie pour les questions/réponses RAG",
     )
-    @app_commands.checks.has_permissions(manage_guild=True)
     async def setup(
         self,
         interaction: discord.Interaction,
@@ -130,7 +129,6 @@ class AdminCog(commands.Cog):
         name="status",
         description="Afficher l'état actuel du bot RAG (documents, canaux, uptime…).",
     )
-    @app_commands.checks.has_permissions(manage_guild=True)
     async def status(self, interaction: discord.Interaction) -> None:
         """Affiche un résumé de l'état du bot."""
         await interaction.response.defer(thinking=True)
@@ -207,7 +205,6 @@ class AdminCog(commands.Cog):
         channel="Le canal dont l'historique doit être réindexé",
         limit="Nombre maximum de messages à parcourir (défaut : 200)",
     )
-    @app_commands.checks.has_permissions(manage_guild=True)
     async def reindex(
         self,
         interaction: discord.Interaction,
