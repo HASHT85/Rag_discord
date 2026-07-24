@@ -22,18 +22,16 @@ _INDEX_PATTERN = re.compile(r"^\[([^\]]+)\]\s*(.+)")
 
 def parse_indexed_message(content: str) -> dict | None:
     """
-    Parse un message suivant le format d'indexation.
+    Parse un message pour l'indexation RAG.
 
-    Format attendu :
-        [Catégorie] Titre du document
-        Contenu du message...
+    Si le message suit le format `[Catégorie] Titre du document`, extrait la catégorie et le titre.
+    Sinon, attribue la catégorie 'Général' et utilise la première ligne comme titre.
 
     Args:
         content: Le contenu brut du message Discord.
 
     Returns:
-        Dictionnaire {'category', 'title', 'content'} ou None
-        si le message ne correspond pas au format.
+        Dictionnaire {'category', 'title', 'content'} ou None si vide.
     """
     if not content or not content.strip():
         return None
@@ -42,14 +40,14 @@ def parse_indexed_message(content: str) -> dict | None:
     first_line = lines[0].strip()
 
     match = _INDEX_PATTERN.match(first_line)
-    if not match:
-        logger.debug("⏭️ Message ignoré (format non reconnu) : %s", first_line[:80])
-        return None
-
-    category = match.group(1).strip()
-    title = match.group(2).strip()
-    # Le contenu est tout ce qui suit la première ligne
-    body = lines[1].strip() if len(lines) > 1 else ""
+    if match:
+        category = match.group(1).strip()
+        title = match.group(2).strip()
+        body = lines[1].strip() if len(lines) > 1 else ""
+    else:
+        category = "Général"
+        title = first_line[:60] if len(first_line) > 60 else first_line
+        body = content.strip()
 
     if not body:
         logger.warning(

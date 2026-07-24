@@ -63,22 +63,19 @@ class IndexerCog(commands.Cog):
         if input_channel_id is None or message.channel.id != input_channel_id:
             return
 
-        # ── Parser le message structuré ──
+        # ── Parser le message (avec fallback automatique si pas de catégorie) ──
         parsed = parse_indexed_message(message.content)
 
-        if parsed is None:
-            # Format incorrect : réagir et envoyer un rappel
-            try:
-                await message.add_reaction("❌")
-                await message.reply(FORMAT_REMINDER, delete_after=30)
-            except discord.HTTPException as exc:
-                logger.warning("Impossible de réagir/répondre au message %s : %s", message.id, exc)
+        if parsed:
+            category: str = parsed["category"]
+            title: str = parsed["title"]
+            content: str = parsed["content"]
+        elif message.attachments:
+            category: str = "Général"
+            title: str = message.attachments[0].filename
+            content: str = message.content or message.attachments[0].filename
+        else:
             return
-
-        # ── Extraction des données parsées ──
-        category: str = parsed["category"]
-        title: str = parsed["title"]
-        content: str = parsed["content"]
 
         try:
             # ── Traitement des pièces jointes ──
@@ -311,58 +308,29 @@ class IndexerCog(commands.Cog):
             )
 
     # ─────────────────────────────────────────────
-    #  Commandes slash par catégorie
+    #  Commande slash universelle d'indexation
     # ─────────────────────────────────────────────
 
-    @discord.app_commands.command(name="note", description="📝 Ajouter une note à la base de connaissances")
-    @discord.app_commands.describe(
-        titre="Le titre de la note",
-        description="Le contenu de la note",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
+    @discord.app_commands.command(
+        name="add",
+        description="➕ Ajouter un document, une note ou un fichier à la base RAG (catégorie optionnelle)",
     )
-    async def note_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
-        await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, "Note", titre, description, fichier)
-
-    @discord.app_commands.command(name="doc", description="📚 Ajouter une documentation à la base de connaissances")
     @discord.app_commands.describe(
-        titre="Le titre du document",
-        description="Le contenu / résumé du document",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
+        titre="Le titre ou résumé du document",
+        description="Le contenu textuel (optionnel si un fichier est joint)",
+        fichier="Fichier joint (PDF, Word, Excel, Python, image, etc. - optionnel)",
+        categorie="Catégorie (Optionnel - Défaut: Général)",
     )
-    async def doc_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+    async def add_command(
+        self,
+        interaction: discord.Interaction,
+        titre: str,
+        description: str = "",
+        fichier: discord.Attachment | None = None,
+        categorie: str = "Général",
+    ) -> None:
         await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, "Documentation", titre, description, fichier)
-
-    @discord.app_commands.command(name="procedure", description="📋 Ajouter une procédure à la base de connaissances")
-    @discord.app_commands.describe(
-        titre="Le titre de la procédure",
-        description="Les étapes / le contenu de la procédure",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
-    )
-    async def procedure_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
-        await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, "Procédure", titre, description, fichier)
-
-    @discord.app_commands.command(name="tuto", description="🎓 Ajouter un tutoriel à la base de connaissances")
-    @discord.app_commands.describe(
-        titre="Le titre du tutoriel",
-        description="Le contenu du tutoriel",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
-    )
-    async def tuto_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
-        await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, "Tutoriel", titre, description, fichier)
-
-    @discord.app_commands.command(name="info", description="ℹ️ Ajouter une info à la base de connaissances")
-    @discord.app_commands.describe(
-        titre="Le titre de l'information",
-        description="Le contenu de l'information",
-        fichier="Un fichier à joindre (PDF, image, texte...)",
-    )
-    async def info_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
-        await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, "Info", titre, description, fichier)
+        await self._index_info(interaction, categorie, titre, description, fichier)
 
 
 async def setup(bot: commands.Bot) -> None:
