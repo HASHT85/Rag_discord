@@ -93,9 +93,9 @@ def _split_text_recursive(
             parts = text.split(sep)
             chunks: list[str] = []
             current = ""
+            sep_prefix = sep.lstrip("\n")
 
             for part in parts:
-                # Ajouter le séparateur sauf si c'est un caractère vide
                 candidate = current + sep + part if current else part
 
                 if len(candidate) <= chunk_size:
@@ -105,15 +105,16 @@ def _split_text_recursive(
                     if current.strip():
                         chunks.append(current.strip())
 
-                    # Si la partie seule dépasse la taille, découper plus fin
-                    if len(part) > chunk_size:
+                    # Reconstituer la partie avec son préfixe s'il a été séparé
+                    part_with_prefix = sep_prefix + part if (sep_prefix and not part.startswith(sep_prefix)) else part
+                    if len(part_with_prefix) > chunk_size:
                         sub_chunks = _split_text_recursive(
-                            part, chunk_size, separators[i + 1:]
+                            part_with_prefix, chunk_size, separators[i + 1:]
                         )
                         chunks.extend(sub_chunks)
                         current = ""
                     else:
-                        current = part
+                        current = part_with_prefix
 
             # Ne pas oublier le dernier morceau
             if current.strip():
@@ -160,7 +161,7 @@ def chunk_text(
         return [text]
 
     # Séparateurs par ordre de priorité (du plus large au plus fin)
-    separators = ["\n\n", "\n", " ", ""]
+    separators = ["\n\n--- ", "\n\n# ", "\n\n```", "\n\n", "\n", " ", ""]
 
     # Découpage initial sans recouvrement
     raw_chunks = _split_text_recursive(text, chunk_size, separators)

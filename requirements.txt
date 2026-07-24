@@ -6,3 +6,8 @@ python-dotenv>=1.0.0
 PyMuPDF>=1.24.0
 aiohttp>=3.9.0
 fastembed>=0.3.0
+python-docx
+openpyxl
+python-pptx
+pandas
+beautifulsoup4

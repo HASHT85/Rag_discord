@@ -338,6 +338,8 @@ class AdminCog(commands.Cog):
     )
     async def help_format(self, interaction: discord.Interaction) -> None:
         """Affiche un guide détaillé du format d'indexation avec des exemples."""
+        await interaction.response.defer(thinking=True)
+
         embed = discord.Embed(
             title="📖 Guide du format d'indexation",
             description=(
@@ -410,7 +412,7 @@ class AdminCog(commands.Cog):
 
         embed.set_footer(text="💡 La catégorie est libre — utilisez ce qui vous convient !")
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────
     #  Gestion des erreurs de permissions

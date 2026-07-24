@@ -151,15 +151,22 @@ async def get_embedding(texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
-async def generate_answer(question: str, context: str, image_paths: list[str] = None) -> str:
+async def generate_answer(
+    question: str,
+    context: str,
+    image_paths: list[str] = None,
+    conversation_history: list[dict] = None,
+) -> str:
     """
     Génère une réponse à une question en utilisant le contexte fourni.
     Supporte la vision si des chemins d'images locaux associés aux documents sont fournis.
+    Prend en compte l'historique de conversation pour les réponses contextuelles.
 
     Args:
         question: La question posée par l'utilisateur.
         context: Le contexte extrait du vectorstore (documents pertinents).
         image_paths: Liste de chemins locaux vers les images associées aux documents récupérés.
+        conversation_history: Historique des messages des tours précédents.
 
     Returns:
         La réponse générée par le LLM.
@@ -216,15 +223,28 @@ async def generate_answer(question: str, context: str, image_paths: list[str] = 
                 except Exception as exc:
                     logger.error("❌ Erreur lors du chargement de l'image '%s' : %s", path, exc)
 
-    logger.debug("🤖 Génération de réponse pour : %s (images chargees : %d)", question[:100], len(user_content) - 1)
+    logger.debug(
+        "🤖 Génération de réponse pour : %s (historique : %d msgs, images chargées : %d)",
+        question[:100],
+        len(conversation_history) if conversation_history else 0,
+        len(user_content) - 1,
+    )
+
+    # 2. Assembler les messages (System + Conversation History + Current User Prompt)
+    messages = [{"role": "system", "content": system_prompt}]
+    if conversation_history:
+        for msg in conversation_history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"],
+                })
+    messages.append({"role": "user", "content": user_content})
 
     async def _call():
         response = await _client.chat.completions.create(
             model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            messages=messages,
             temperature=0.3,
             max_tokens=1500,
         )

@@ -4,13 +4,15 @@ Fournit une commande /ask et écoute les messages du canal de sortie.
 """
 
 import logging
+import re
 from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from config import load_channels_config, TOP_K
+from services.conversation_memory import ConversationMemory, conversation_memory
 from services.openrouter_client import get_embedding, generate_answer
 from services.vectorstore import VectorStore
 
@@ -50,27 +52,77 @@ def _build_sources_footer(ranked_docs: list[dict]) -> str:
     return "Sources : " + " • ".join(sources)
 
 
+def resolve_context_id(
+    channel: Optional[discord.abc.GuildChannel | discord.Thread | discord.DMChannel | discord.abc.PrivateChannel] = None,
+    reference: Optional[discord.MessageReference] = None,
+    memory: Optional[ConversationMemory] = None,
+) -> str:
+    """
+    Détermine l'identifiant de contexte pour la mémoire de conversation.
+    Priorités :
+    1. Si le message répond à un message bot répertorié dans la mémoire, on utilise son context_id.
+    2. Si le canal est un Thread Discord, tous les messages du fil appartiennent au contexte du fil str(channel.id),
+       sauf si la référence pointe explicitement vers un message bot enregistré (Priorité 1).
+    3. Si le message répond à un autre message hors fil (parent_message_id), on utilise str(parent_message_id).
+    4. Sinon, on utilise str(channel.id).
+    """
+    if reference and reference.message_id:
+        parent_id = str(reference.message_id)
+        if memory:
+            registered_context = memory.get_context_id_from_message(parent_id)
+            if registered_context:
+                return registered_context
+
+    if isinstance(channel, discord.Thread):
+        return str(channel.id)
+
+    if reference and reference.message_id:
+        return str(reference.message_id)
+
+    if channel and hasattr(channel, "id"):
+        return str(channel.id)
+
+    return "default_context"
+
+
 async def _run_rag_pipeline(
     vector_store: VectorStore,
     question: str,
     bot: Optional[commands.Bot] = None,
+    conversation_history: Optional[list[dict]] = None,
 ) -> tuple[str, str, Optional[str], Optional[str]]:
     """
-    Exécute le pipeline RAG état de l'art :
-    Embedding → Recherche Hybride Qdrant (Dense + Sparse BM25) → Re-Ranking FlashRank → Génération Multimodale.
+    Exécute le pipeline RAG état de l'art avec support de la mémoire de conversation :
+    Formulation de la requête → Embedding → Recherche Hybride Qdrant → Re-Ranking FlashRank → Génération Multimodale.
 
     Retourne (answer, sources_footer, attachment_url, attachment_name).
     Lève ValueError si aucun document pertinent n'est trouvé.
     """
     from services.reranker import rerank_documents
 
+    # Formuler la requête de recherche vectorielle en enrichissant si besoin avec le contexte précédent
+    retrieval_query = question
+    if conversation_history:
+        prev_user_msgs = [msg["content"] for msg in conversation_history if msg.get("role") == "user"]
+        if prev_user_msgs:
+            last_user_query = prev_user_msgs[-1]
+            followup_indicators = [
+                "ce point", "le point", "celui-ci", "celle-ci", "ce dernier", "cette dernière",
+                "en savoir plus", "détailler", "expliquer", "préciser", "pourquoi", "comment",
+                "et pour", "qu'en est-il", "plus de détails", "lequel", "laquelle", "lesquels", "lesquelles"
+            ]
+            pattern = r'\b(?:' + '|'.join(re.escape(w) for w in followup_indicators) + r')\b'
+            is_followup = bool(re.search(pattern, question.lower()))
+            if is_followup:
+                retrieval_query = f"{last_user_query} {question}"
+
     # 1. Embedding Dense de la question (3072d)
-    question_embedding = await get_embedding([question])
+    question_embedding = await get_embedding([retrieval_query])
 
     # 2. Recherche Hybride dans Qdrant (Dense + Sparse BM25)
     results = vector_store.query(
         query_embedding=question_embedding[0],
-        query_text=question,
+        query_text=retrieval_query,
         n_results=TOP_K,
     )
 
@@ -88,7 +140,7 @@ async def _run_rag_pipeline(
         })
 
     # 4. Re-Ranking FlashRank (Filtrage anti-bruit)
-    ranked_docs = rerank_documents(query=question, documents=raw_docs, top_n=TOP_K)
+    ranked_docs = rerank_documents(query=retrieval_query, documents=raw_docs, top_n=TOP_K)
     if not ranked_docs:
         raise ValueError("Aucun document pertinent retenu après filtrage.")
 
@@ -130,11 +182,12 @@ async def _run_rag_pipeline(
 
     context = "\n\n---\n\n".join(context_parts)
 
-    # 6. Générer la réponse avec le LLM (Raisonnement + Vision)
+    # 6. Générer la réponse avec le LLM (Raisonnement + Vision + Mémoire de conversation)
     answer = await generate_answer(
         question=question,
         context=context,
         image_paths=image_paths if image_paths else None,
+        conversation_history=conversation_history,
     )
     sources_footer = _build_sources_footer(ranked_docs)
 
@@ -202,10 +255,31 @@ def _build_response_embeds(
 class RAGCog(commands.Cog):
     """Cog de recherche RAG — répond aux questions via embeddings et LLM."""
 
-    def __init__(self, bot: commands.Bot) -> None:
-        """Initialise le cog avec une référence au bot et le VectorStore."""
+    def __init__(self, bot: commands.Bot, memory: Optional[ConversationMemory] = None) -> None:
+        """Initialise le cog avec une référence au bot, le VectorStore et la mémoire de conversation."""
         self.bot = bot
         self.vector_store = VectorStore()
+        self.memory = memory if memory is not None else conversation_memory
+        self.cleanup_task.start()
+
+    def cog_unload(self) -> None:
+        """Stoppe les tâches en arrière-plan au déchargement du cog."""
+        self.cleanup_task.cancel()
+
+    @tasks.loop(hours=1)
+    async def cleanup_task(self) -> None:
+        """Tâche périodique nettoyant la mémoire de conversation expirée (toutes les heures)."""
+        try:
+            cleaned = self.memory.cleanup_expired(ttl_seconds=86400)
+            if cleaned > 0:
+                logger.info("🧹 Tâche périodique : %d contextes expirés supprimés.", cleaned)
+        except Exception as exc:
+            logger.error("Erreur lors du nettoyage périodique de la mémoire : %s", exc)
+
+    @cleanup_task.before_loop
+    async def before_cleanup_task(self) -> None:
+        """Attend que le bot soit prêt avant de démarrer la boucle de nettoyage."""
+        await self.bot.wait_until_ready()
 
     # ─────────────────────────────────────────────
     #  Commande slash /ask
@@ -217,31 +291,43 @@ class RAGCog(commands.Cog):
     @app_commands.describe(question="La question à poser")
     async def ask(self, interaction: discord.Interaction, question: str) -> None:
         """Commande slash /ask — exécute le pipeline RAG et répond."""
+        # ── Différer la réponse (thinking…) ──
+        await interaction.response.defer(thinking=True)
+
         # ── Vérifier le canal de sortie (si configuré) ──
         channels_config = load_channels_config()
         output_channel_id = channels_config.get("output_channel_id")
 
         if output_channel_id and interaction.channel_id != output_channel_id:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"⚠️ Cette commande est réservée au canal <#{output_channel_id}>.",
                 ephemeral=True,
             )
             return
 
-        # ── Différer la réponse (thinking…) ──
-        await interaction.response.defer(thinking=True)
+        context_id = resolve_context_id(
+            channel=interaction.channel,
+            reference=None,
+            memory=self.memory,
+        )
+        history = self.memory.get_history(context_id)
 
         try:
             answer, sources_footer, attachment_url, attachment_name = await _run_rag_pipeline(
-                self.vector_store, question, bot=self.bot
+                self.vector_store, question, bot=self.bot, conversation_history=history
             )
 
             embeds = _build_response_embeds(question, answer, sources_footer, attachment_url, attachment_name)
 
             # Envoyer le premier embed en followup, les suivants en messages séparés
-            await interaction.followup.send(embed=embeds[0])
+            first_msg = await interaction.followup.send(embed=embeds[0], wait=True)
             for embed in embeds[1:]:
                 await interaction.followup.send(embed=embed)
+
+            # Enregistrer le tour dans la mémoire
+            self.memory.add_turn(context_id, question, answer)
+            if first_msg and hasattr(first_msg, "id"):
+                self.memory.register_bot_message(first_msg.id, context_id)
 
         except ValueError as exc:
             # Aucun document trouvé
@@ -267,19 +353,25 @@ class RAGCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """
-        Écoute les messages du canal de sortie.
+        Écoute les messages du canal de sortie et des threads associés.
         Traite chaque message non-bot comme une question RAG.
         """
         # ── Ignorer les bots ──
         if message.author.bot:
             return
 
-        # ── Vérifier que le message est dans le canal de sortie ──
+        # ── Vérifier que le message est dans le canal de sortie ou un fil dérivé ──
         channels_config = load_channels_config()
         output_channel_id = channels_config.get("output_channel_id")
 
-        if output_channel_id is None or message.channel.id != output_channel_id:
-            return
+        if output_channel_id is not None:
+            is_target_channel = message.channel.id == output_channel_id
+            is_target_thread = (
+                isinstance(message.channel, discord.Thread)
+                and message.channel.parent_id == output_channel_id
+            )
+            if not (is_target_channel or is_target_thread):
+                return
 
         # ── Ignorer les commandes potentielles (préfixe !) ──
         if message.content.startswith("!") or message.content.startswith("/"):
@@ -290,19 +382,31 @@ class RAGCog(commands.Cog):
         if len(question) < 3:
             return
 
+        context_id = resolve_context_id(
+            channel=message.channel,
+            reference=message.reference,
+            memory=self.memory,
+        )
+        history = self.memory.get_history(context_id)
+
         # ── Indicateur de traitement (typing…) ──
         async with message.channel.typing():
             try:
                 answer, sources_footer, attachment_url, attachment_name = await _run_rag_pipeline(
-                    self.vector_store, question, bot=self.bot
+                    self.vector_store, question, bot=self.bot, conversation_history=history
                 )
 
                 embeds = _build_response_embeds(question, answer, sources_footer, attachment_url, attachment_name)
 
                 # Répondre en reply au message original
-                await message.reply(embed=embeds[0], mention_author=False)
+                reply_msg = await message.reply(embed=embeds[0], mention_author=False)
                 for embed in embeds[1:]:
                     await message.channel.send(embed=embed)
+
+                # Enregistrer le tour dans la mémoire
+                self.memory.add_turn(context_id, question, answer)
+                if reply_msg and hasattr(reply_msg, "id"):
+                    self.memory.register_bot_message(reply_msg.id, context_id)
 
             except ValueError:
                 # Aucun document trouvé
@@ -325,3 +429,4 @@ class RAGCog(commands.Cog):
 async def setup(bot: commands.Bot) -> None:
     """Point d'entrée pour charger le cog RAG."""
     await bot.add_cog(RAGCog(bot))
+

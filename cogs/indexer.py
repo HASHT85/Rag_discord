@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
+from pathlib import Path
+
 from config import load_channels_config, CHUNK_SIZE, CHUNK_OVERLAP
 from services.chunker import (
     parse_indexed_message,
@@ -18,7 +20,11 @@ from services.chunker import (
 )
 from services.openrouter_client import get_embedding
 from services.vectorstore import VectorStore
-from services.attachments import extract_text_from_attachment, is_supported_attachment
+from services.attachments import (
+    extract_text_from_attachment,
+    extract_attachment_details,
+    is_supported_attachment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +82,27 @@ class IndexerCog(commands.Cog):
 
         try:
             # ── Traitement des pièces jointes ──
+            file_type = "text"
+            file_ext = ""
+            source = "discord_message"
+            page_or_sheet_count = 1
+            attachment_name = None
+            attachment_url = None
+
             if message.attachments:
                 for attachment in message.attachments:
+                    if attachment_name is None:
+                        attachment_name = attachment.filename
+                        attachment_url = attachment.url
+                        source = attachment.filename
+                        file_ext = Path(attachment.filename).suffix.lower()
                     if is_supported_attachment(attachment.filename):
-                        extracted = await extract_text_from_attachment(attachment)
-                        if extracted:
-                            content += f"\n\n--- Pièce jointe : {attachment.filename} ---\n{extracted}"
+                        details = await extract_attachment_details(attachment)
+                        if details:
+                            content += f"\n\n--- Pièce jointe : {attachment.filename} ---\n{details['text']}"
+                            file_type = details.get("file_type", file_type)
+                            file_ext = details.get("file_ext", file_ext)
+                            page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
 
             # ── Construction du texte complet du document ──
             timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
@@ -104,8 +125,6 @@ class IndexerCog(commands.Cog):
             ids: list[str] = []
             metadatas: list[dict] = []
 
-            attachment_name = message.attachments[0].filename if message.attachments else None
-            attachment_url = message.attachments[0].url if message.attachments else None
             for idx, _chunk in enumerate(chunks):
                 doc_id = generate_doc_id(message.id, chunk_index=idx)
                 ids.append(doc_id)
@@ -119,6 +138,10 @@ class IndexerCog(commands.Cog):
                     "has_attachment": bool(message.attachments),
                     "attachment_name": attachment_name,
                     "attachment_url": attachment_url,
+                    "file_type": file_type,
+                    "file_ext": file_ext,
+                    "source": source,
+                    "page_or_sheet_count": page_or_sheet_count,
                     "chunk_index": idx,
                     "total_chunks": len(chunks),
                 })
@@ -167,17 +190,29 @@ class IndexerCog(commands.Cog):
         fichier: discord.Attachment | None = None,
     ) -> None:
         """Logique commune d'indexation pour toutes les commandes slash."""
-        await interaction.response.defer(thinking=True)
-
         try:
             content = description
 
             # ── Traitement du fichier joint ──
+            file_type = "text"
+            file_ext = ""
+            source = "discord_message"
+            page_or_sheet_count = 1
+            attachment_name = None
+            attachment_url = None
+
             if fichier is not None:
+                attachment_name = fichier.filename
+                attachment_url = fichier.url
+                source = fichier.filename
+                file_ext = Path(fichier.filename).suffix.lower()
                 if is_supported_attachment(fichier.filename):
-                    extracted = await extract_text_from_attachment(fichier)
-                    if extracted:
-                        content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{extracted}"
+                    details = await extract_attachment_details(fichier)
+                    if details:
+                        content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{details['text']}"
+                        file_type = details.get("file_type", file_type)
+                        file_ext = details.get("file_ext", file_ext)
+                        page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
                 else:
                     await interaction.followup.send(
                         f"⚠️ Format de fichier non supporté : `{fichier.filename}`",
@@ -207,8 +242,6 @@ class IndexerCog(commands.Cog):
             ids: list[str] = []
             metadatas: list[dict] = []
 
-            attachment_name = fichier.filename if fichier is not None else None
-            attachment_url = fichier.url if fichier is not None else None
             for idx, _chunk in enumerate(chunks):
                 doc_id = generate_doc_id(base_id, chunk_index=idx)
                 ids.append(doc_id)
@@ -222,6 +255,10 @@ class IndexerCog(commands.Cog):
                     "has_attachment": fichier is not None,
                     "attachment_name": attachment_name,
                     "attachment_url": attachment_url,
+                    "file_type": file_type,
+                    "file_ext": file_ext,
+                    "source": source,
+                    "page_or_sheet_count": page_or_sheet_count,
                     "chunk_index": idx,
                     "total_chunks": len(chunks),
                 })
@@ -284,6 +321,7 @@ class IndexerCog(commands.Cog):
         fichier="Un fichier à joindre (PDF, image, texte...)",
     )
     async def note_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await interaction.response.defer(thinking=True)
         await self._index_info(interaction, "Note", titre, description, fichier)
 
     @discord.app_commands.command(name="doc", description="📚 Ajouter une documentation à la base de connaissances")
@@ -293,6 +331,7 @@ class IndexerCog(commands.Cog):
         fichier="Un fichier à joindre (PDF, image, texte...)",
     )
     async def doc_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await interaction.response.defer(thinking=True)
         await self._index_info(interaction, "Documentation", titre, description, fichier)
 
     @discord.app_commands.command(name="procedure", description="📋 Ajouter une procédure à la base de connaissances")
@@ -302,6 +341,7 @@ class IndexerCog(commands.Cog):
         fichier="Un fichier à joindre (PDF, image, texte...)",
     )
     async def procedure_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await interaction.response.defer(thinking=True)
         await self._index_info(interaction, "Procédure", titre, description, fichier)
 
     @discord.app_commands.command(name="tuto", description="🎓 Ajouter un tutoriel à la base de connaissances")
@@ -311,6 +351,7 @@ class IndexerCog(commands.Cog):
         fichier="Un fichier à joindre (PDF, image, texte...)",
     )
     async def tuto_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await interaction.response.defer(thinking=True)
         await self._index_info(interaction, "Tutoriel", titre, description, fichier)
 
     @discord.app_commands.command(name="info", description="ℹ️ Ajouter une info à la base de connaissances")
@@ -320,6 +361,7 @@ class IndexerCog(commands.Cog):
         fichier="Un fichier à joindre (PDF, image, texte...)",
     )
     async def info_command(self, interaction: discord.Interaction, titre: str, description: str, fichier: discord.Attachment | None = None) -> None:
+        await interaction.response.defer(thinking=True)
         await self._index_info(interaction, "Info", titre, description, fichier)
 
 
