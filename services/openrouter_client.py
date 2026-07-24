@@ -246,7 +246,7 @@ async def generate_answer(
             model=LLM_MODEL,
             messages=messages,
             temperature=0.3,
-            max_tokens=1500,
+            max_tokens=4096,
         )
         return response
 

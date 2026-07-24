@@ -37,7 +37,7 @@ COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "discord_rag")
 # ─────────────────────────────────────────────
 #  Paramètres RAG
 # ─────────────────────────────────────────────
-TOP_K: int = int(os.getenv("TOP_K", "5"))
+TOP_K: int = int(os.getenv("TOP_K", "10"))
 CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))
 CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
 
