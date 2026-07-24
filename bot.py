@@ -98,6 +98,15 @@ async def on_ready() -> None:
     logger.info("   Serveurs : %d", len(bot.guilds))
     logger.info("   ID : %s", bot.user.id if bot.user else "inconnu")
 
+    # ── Nettoyage des doublons locaux (guild-level) pour ne garder que les globales ──
+    for guild in bot.guilds:
+        try:
+            bot.tree.clear_commands(guild=guild)
+            await bot.tree.sync(guild=guild)
+            logger.info("   🧹 Doublons locaux nettoyés sur %s", guild.name)
+        except Exception as exc:
+            logger.warning("   ⚠️ Impossible de nettoyer les doublons sur %s : %s", guild.name, exc)
+
     # ── Définir le statut du bot ──
     activity = discord.Activity(
         type=discord.ActivityType.listening,
