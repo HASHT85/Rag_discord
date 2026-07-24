@@ -104,6 +104,7 @@ class IndexerCog(commands.Cog):
             ids: list[str] = []
             metadatas: list[dict] = []
 
+            attachment_name = message.attachments[0].filename if message.attachments else None
             attachment_url = message.attachments[0].url if message.attachments else None
             for idx, _chunk in enumerate(chunks):
                 doc_id = generate_doc_id(message.id, chunk_index=idx)
@@ -116,6 +117,7 @@ class IndexerCog(commands.Cog):
                     "title": title,
                     "timestamp": timestamp_str,
                     "has_attachment": bool(message.attachments),
+                    "attachment_name": attachment_name,
                     "attachment_url": attachment_url,
                     "chunk_index": idx,
                     "total_chunks": len(chunks),
@@ -205,6 +207,7 @@ class IndexerCog(commands.Cog):
             ids: list[str] = []
             metadatas: list[dict] = []
 
+            attachment_name = fichier.filename if fichier is not None else None
             attachment_url = fichier.url if fichier is not None else None
             for idx, _chunk in enumerate(chunks):
                 doc_id = generate_doc_id(base_id, chunk_index=idx)
@@ -217,6 +220,7 @@ class IndexerCog(commands.Cog):
                     "title": titre,
                     "timestamp": timestamp_str,
                     "has_attachment": fichier is not None,
+                    "attachment_name": attachment_name,
                     "attachment_url": attachment_url,
                     "chunk_index": idx,
                     "total_chunks": len(chunks),

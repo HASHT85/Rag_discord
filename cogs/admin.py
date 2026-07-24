@@ -267,7 +267,7 @@ class AdminCog(commands.Cog):
                     chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
                     embeddings = await get_embedding(chunks)
 
-                    ids = [generate_doc_id(message.id, idx) for idx in range(len(chunks))]
+                    attachment_name = message.attachments[0].filename if message.attachments else None
                     attachment_url = message.attachments[0].url if message.attachments else None
                     metadatas = [
                         {
@@ -278,6 +278,7 @@ class AdminCog(commands.Cog):
                             "title": title,
                             "timestamp": timestamp_str,
                             "has_attachment": bool(message.attachments),
+                            "attachment_name": attachment_name,
                             "attachment_url": attachment_url,
                             "chunk_index": idx,
                             "total_chunks": len(chunks),

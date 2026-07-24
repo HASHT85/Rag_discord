@@ -54,12 +54,12 @@ async def _run_rag_pipeline(
     vector_store: VectorStore,
     question: str,
     bot: Optional[commands.Bot] = None,
-) -> tuple[str, str, Optional[str]]:
+) -> tuple[str, str, Optional[str], Optional[str]]:
     """
     Exécute le pipeline RAG état de l'art :
     Embedding → Recherche Hybride Qdrant (Dense + Sparse BM25) → Re-Ranking FlashRank → Génération Multimodale.
 
-    Retourne (answer, sources_footer, attachment_url).
+    Retourne (answer, sources_footer, attachment_url, attachment_name).
     Lève ValueError si aucun document pertinent n'est trouvé.
     """
     from services.reranker import rerank_documents
@@ -92,10 +92,11 @@ async def _run_rag_pipeline(
     if not ranked_docs:
         raise ValueError("Aucun document pertinent retenu après filtrage.")
 
-    # 5. Concaténer le contexte et extraire les images (locales ou URLs Discord)
+    # 5. Concaténer le contexte et extraire les images / fichiers joints
     context_parts = []
     image_paths = []
     attachment_url = None
+    attachment_name = None
     for doc in ranked_docs:
         context_parts.append(doc["text"])
         meta = doc.get("metadata", {})
@@ -103,6 +104,7 @@ async def _run_rag_pipeline(
             image_paths.append(meta.get("local_path"))
         if not attachment_url and meta.get("attachment_url"):
             attachment_url = meta.get("attachment_url")
+            attachment_name = meta.get("attachment_name")
 
     # Fallback dynamique : Si l'URL n'était pas stockée en métadonnée (anciens index), la récupérer directement sur Discord
     if not attachment_url and bot:
@@ -120,10 +122,11 @@ async def _run_rag_pipeline(
                             msg = await ch.fetch_message(int(message_id))
                             if msg.attachments:
                                 attachment_url = msg.attachments[0].url
-                                logger.info("🖼️ URL d'image récupérée sur Discord (message %s) : %s", message_id, attachment_url)
+                                attachment_name = msg.attachments[0].filename
+                                logger.info("📎 Fichier d'origine récupéré sur Discord (message %s) : %s", message_id, attachment_name)
                                 break
                     except Exception as exc:
-                        logger.warning("Impossible de récupérer l'image du message %s : %s", message_id, exc)
+                        logger.warning("Impossible de récupérer la pièce jointe du message %s : %s", message_id, exc)
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -135,7 +138,7 @@ async def _run_rag_pipeline(
     )
     sources_footer = _build_sources_footer(ranked_docs)
 
-    return answer, sources_footer, attachment_url
+    return answer, sources_footer, attachment_url, attachment_name
 
 
 def _build_response_embeds(
@@ -143,10 +146,11 @@ def _build_response_embeds(
     answer: str,
     sources_footer: str,
     attachment_url: Optional[str] = None,
+    attachment_name: Optional[str] = None,
 ) -> list[discord.Embed]:
     """
     Construit un ou plusieurs embeds Discord pour la réponse RAG.
-    Découpe automatiquement si la réponse dépasse la limite et affiche l'image d'illustration si disponible.
+    Découpe automatiquement si la réponse dépasse la limite et ajoute un bouton de téléchargement de fichier.
     """
     embeds: list[discord.Embed] = []
     truncated_question = _truncate(question, 256)
@@ -176,11 +180,19 @@ def _build_response_embeds(
         if i == 0:
             embed.title = f"💡 {truncated_question}"
 
-        # Footer et image uniquement sur le dernier embed
+        # Footer et pièce jointe uniquement sur le dernier embed
         if i == len(chunks) - 1:
             embed.set_footer(text=_truncate(sources_footer, 2048))
             if attachment_url:
-                embed.set_image(url=attachment_url)
+                name = attachment_name or "Télécharger le fichier joint"
+                embed.add_field(
+                    name="📎 Fichier joint d'origine",
+                    value=f"📥 **[{name}]({attachment_url})**",
+                    inline=False,
+                )
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                if ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp"}:
+                    embed.set_image(url=attachment_url)
 
         embeds.append(embed)
 
@@ -220,11 +232,11 @@ class RAGCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            answer, sources_footer, attachment_url = await _run_rag_pipeline(
+            answer, sources_footer, attachment_url, attachment_name = await _run_rag_pipeline(
                 self.vector_store, question, bot=self.bot
             )
 
-            embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
+            embeds = _build_response_embeds(question, answer, sources_footer, attachment_url, attachment_name)
 
             # Envoyer le premier embed en followup, les suivants en messages séparés
             await interaction.followup.send(embed=embeds[0])
@@ -281,11 +293,11 @@ class RAGCog(commands.Cog):
         # ── Indicateur de traitement (typing…) ──
         async with message.channel.typing():
             try:
-                answer, sources_footer, attachment_url = await _run_rag_pipeline(
+                answer, sources_footer, attachment_url, attachment_name = await _run_rag_pipeline(
                     self.vector_store, question, bot=self.bot
                 )
 
-                embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
+                embeds = _build_response_embeds(question, answer, sources_footer, attachment_url, attachment_name)
 
                 # Répondre en reply au message original
                 await message.reply(embed=embeds[0], mention_author=False)
