@@ -53,12 +53,12 @@ def _build_sources_footer(ranked_docs: list[dict]) -> str:
 async def _run_rag_pipeline(
     vector_store: VectorStore,
     question: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, Optional[str]]:
     """
     Exécute le pipeline RAG état de l'art :
     Embedding → Recherche Hybride Qdrant (Dense + Sparse BM25) → Re-Ranking FlashRank → Génération Multimodale.
 
-    Retourne (answer, sources_footer).
+    Retourne (answer, sources_footer, attachment_url).
     Lève ValueError si aucun document pertinent n'est trouvé.
     """
     from services.reranker import rerank_documents
@@ -91,14 +91,17 @@ async def _run_rag_pipeline(
     if not ranked_docs:
         raise ValueError("Aucun document pertinent retenu après filtrage.")
 
-    # 5. Concaténer le contexte et extraire les images locales
+    # 5. Concaténer le contexte et extraire les images (locales ou URLs Discord)
     context_parts = []
     image_paths = []
+    attachment_url = None
     for doc in ranked_docs:
         context_parts.append(doc["text"])
         meta = doc.get("metadata", {})
         if meta.get("type") == "image" and meta.get("local_path"):
             image_paths.append(meta.get("local_path"))
+        if not attachment_url and meta.get("attachment_url"):
+            attachment_url = meta.get("attachment_url")
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -110,17 +113,18 @@ async def _run_rag_pipeline(
     )
     sources_footer = _build_sources_footer(ranked_docs)
 
-    return answer, sources_footer
+    return answer, sources_footer, attachment_url
 
 
 def _build_response_embeds(
     question: str,
     answer: str,
     sources_footer: str,
+    attachment_url: Optional[str] = None,
 ) -> list[discord.Embed]:
     """
     Construit un ou plusieurs embeds Discord pour la réponse RAG.
-    Découpe automatiquement si la réponse dépasse la limite.
+    Découpe automatiquement si la réponse dépasse la limite et affiche l'image d'illustration si disponible.
     """
     embeds: list[discord.Embed] = []
     truncated_question = _truncate(question, 256)
@@ -150,9 +154,11 @@ def _build_response_embeds(
         if i == 0:
             embed.title = f"💡 {truncated_question}"
 
-        # Footer avec les sources uniquement sur le dernier embed
+        # Footer et image uniquement sur le dernier embed
         if i == len(chunks) - 1:
             embed.set_footer(text=_truncate(sources_footer, 2048))
+            if attachment_url:
+                embed.set_image(url=attachment_url)
 
         embeds.append(embed)
 
@@ -192,11 +198,11 @@ class RAGCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            answer, sources_footer = await _run_rag_pipeline(
+            answer, sources_footer, attachment_url = await _run_rag_pipeline(
                 self.vector_store, question
             )
 
-            embeds = _build_response_embeds(question, answer, sources_footer)
+            embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
 
             # Envoyer le premier embed en followup, les suivants en messages séparés
             await interaction.followup.send(embed=embeds[0])
@@ -253,11 +259,11 @@ class RAGCog(commands.Cog):
         # ── Indicateur de traitement (typing…) ──
         async with message.channel.typing():
             try:
-                answer, sources_footer = await _run_rag_pipeline(
+                answer, sources_footer, attachment_url = await _run_rag_pipeline(
                     self.vector_store, question
                 )
 
-                embeds = _build_response_embeds(question, answer, sources_footer)
+                embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
 
                 # Répondre en reply au message original
                 await message.reply(embed=embeds[0], mention_author=False)

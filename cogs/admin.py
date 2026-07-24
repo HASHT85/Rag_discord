@@ -268,6 +268,7 @@ class AdminCog(commands.Cog):
                     embeddings = await get_embedding(chunks)
 
                     ids = [generate_doc_id(message.id, idx) for idx in range(len(chunks))]
+                    attachment_url = message.attachments[0].url if message.attachments else None
                     metadatas = [
                         {
                             "message_id": str(message.id),
@@ -277,6 +278,7 @@ class AdminCog(commands.Cog):
                             "title": title,
                             "timestamp": timestamp_str,
                             "has_attachment": bool(message.attachments),
+                            "attachment_url": attachment_url,
                             "chunk_index": idx,
                             "total_chunks": len(chunks),
                         }
