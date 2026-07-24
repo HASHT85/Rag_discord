@@ -1,3 +1,4 @@
+# Build v2.0.0 Qdrant + FlashRank
 FROM python:3.12-slim
 
 # Définir le répertoire de travail
