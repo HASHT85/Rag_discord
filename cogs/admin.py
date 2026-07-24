@@ -62,6 +62,8 @@ class AdminCog(commands.Cog):
         output_channel: discord.TextChannel,
     ) -> None:
         """Configure les canaux d'entrée et de sortie du bot."""
+        await interaction.response.defer(thinking=True)
+
         # ── Sauvegarder la configuration ──
         save_channels_config(input_channel.id, output_channel.id)
 
@@ -81,7 +83,7 @@ class AdminCog(commands.Cog):
             inline=True,
         )
         embed.set_footer(text="Configuration sauvegardée avec succès.")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
         # ── Messages de bienvenue dans les canaux ──
         try:
