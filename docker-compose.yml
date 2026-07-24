@@ -2,6 +2,7 @@ services:
   # Force rebuild: v2.0.0
   discord-rag-bot:
     build: .
+    image: discord-rag-bot:v2.0.0
     container_name: discord-rag-bot
     restart: unless-stopped
     env_file:
