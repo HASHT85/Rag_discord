@@ -24,9 +24,11 @@ from services.chunker import (
     chunk_text,
     build_document_text,
     generate_doc_id,
-)
+from pathlib import Path
+
 from services.openrouter_client import get_embedding
 from services.vectorstore import VectorStore
+from services.attachments import extract_attachment_details, is_supported_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -243,14 +245,41 @@ class AdminCog(commands.Cog):
 
                 # Parser le message
                 parsed = parse_indexed_message(message.content)
-                if parsed is None:
+                if parsed:
+                    category = parsed["category"]
+                    title = parsed["title"]
+                    content = parsed["content"]
+                elif message.attachments:
+                    category = "Documentation"
+                    title = message.attachments[0].filename
+                    content = message.content or message.attachments[0].filename
+                else:
                     skipped += 1
                     continue
 
                 try:
-                    category = parsed["category"]
-                    title = parsed["title"]
-                    content = parsed["content"]
+                    # Traitement des pièces jointes
+                    file_type = "text"
+                    file_ext = ""
+                    source = "discord_message"
+                    page_or_sheet_count = 1
+                    attachment_name = None
+                    attachment_url = None
+
+                    if message.attachments:
+                        for attachment in message.attachments:
+                            if attachment_name is None:
+                                attachment_name = attachment.filename
+                                attachment_url = attachment.url
+                                source = attachment.filename
+                                file_ext = Path(attachment.filename).suffix.lower()
+                            if is_supported_attachment(attachment.filename):
+                                details = await extract_attachment_details(attachment)
+                                if details:
+                                    content += f"\n\n--- Pièce jointe : {attachment.filename} ---\n{details['text']}"
+                                    file_type = details.get("file_type", file_type)
+                                    file_ext = details.get("file_ext", file_ext)
+                                    page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
 
                     # Construction du texte
                     timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
@@ -267,8 +296,7 @@ class AdminCog(commands.Cog):
                     chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
                     embeddings = await get_embedding(chunks)
 
-                    attachment_name = message.attachments[0].filename if message.attachments else None
-                    attachment_url = message.attachments[0].url if message.attachments else None
+                    ids = [generate_doc_id(message.id, idx) for idx in range(len(chunks))]
                     metadatas = [
                         {
                             "message_id": str(message.id),
@@ -280,6 +308,10 @@ class AdminCog(commands.Cog):
                             "has_attachment": bool(message.attachments),
                             "attachment_name": attachment_name,
                             "attachment_url": attachment_url,
+                            "file_type": file_type,
+                            "file_ext": file_ext,
+                            "source": source,
+                            "page_or_sheet_count": page_or_sheet_count,
                             "chunk_index": idx,
                             "total_chunks": len(chunks),
                         }
