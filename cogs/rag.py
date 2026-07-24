@@ -53,6 +53,7 @@ def _build_sources_footer(ranked_docs: list[dict]) -> str:
 async def _run_rag_pipeline(
     vector_store: VectorStore,
     question: str,
+    bot: Optional[commands.Bot] = None,
 ) -> tuple[str, str, Optional[str]]:
     """
     Exécute le pipeline RAG état de l'art :
@@ -102,6 +103,27 @@ async def _run_rag_pipeline(
             image_paths.append(meta.get("local_path"))
         if not attachment_url and meta.get("attachment_url"):
             attachment_url = meta.get("attachment_url")
+
+    # Fallback dynamique : Si l'URL n'était pas stockée en métadonnée (anciens index), la récupérer directement sur Discord
+    if not attachment_url and bot:
+        for doc in ranked_docs:
+            meta = doc.get("metadata", {})
+            if meta.get("has_attachment") or meta.get("attachment_url"):
+                channel_id = meta.get("channel_id")
+                message_id = meta.get("message_id")
+                if channel_id and message_id:
+                    try:
+                        ch = bot.get_channel(int(channel_id))
+                        if not ch:
+                            ch = await bot.fetch_channel(int(channel_id))
+                        if ch:
+                            msg = await ch.fetch_message(int(message_id))
+                            if msg.attachments:
+                                attachment_url = msg.attachments[0].url
+                                logger.info("🖼️ URL d'image récupérée sur Discord (message %s) : %s", message_id, attachment_url)
+                                break
+                    except Exception as exc:
+                        logger.warning("Impossible de récupérer l'image du message %s : %s", message_id, exc)
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -199,7 +221,7 @@ class RAGCog(commands.Cog):
 
         try:
             answer, sources_footer, attachment_url = await _run_rag_pipeline(
-                self.vector_store, question
+                self.vector_store, question, bot=self.bot
             )
 
             embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
@@ -260,7 +282,7 @@ class RAGCog(commands.Cog):
         async with message.channel.typing():
             try:
                 answer, sources_footer, attachment_url = await _run_rag_pipeline(
-                    self.vector_store, question
+                    self.vector_store, question, bot=self.bot
                 )
 
                 embeds = _build_response_embeds(question, answer, sources_footer, attachment_url)
