@@ -24,6 +24,7 @@ from services.chunker import (
     chunk_text,
     build_document_text,
     generate_doc_id,
+)
 from pathlib import Path
 
 from services.openrouter_client import get_embedding
