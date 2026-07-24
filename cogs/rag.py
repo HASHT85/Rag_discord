@@ -30,16 +30,16 @@ def _truncate(text: str, max_len: int) -> str:
     return text[: max_len - 1] + "…"
 
 
-def _build_sources_footer(results: dict) -> str:
+def _build_sources_footer(ranked_docs: list[dict]) -> str:
     """
-    Construit un résumé des sources à partir des résultats ChromaDB.
+    Construit un résumé des sources à partir des documents retenus par le Reranker.
     Renvoie une chaîne formatée avec catégories et titres uniques.
     """
     seen: set[str] = set()
     sources: list[str] = []
 
-    metadatas = results.get("metadatas", [])
-    for meta in metadatas:
+    for doc in ranked_docs:
+        meta = doc.get("metadata", {})
         key = f"[{meta.get('category', '?')}] {meta.get('title', '?')}"
         if key not in seen:
             seen.add(key)
@@ -50,33 +50,26 @@ def _build_sources_footer(results: dict) -> str:
     return "Sources : " + " • ".join(sources)
 
 
-def _build_context(results: dict) -> str:
-    """
-    Assemble le contexte textuel à partir des documents retrouvés.
-    Chaque document est séparé par un délimiteur.
-    """
-    documents = results.get("documents", [])
-    if not documents:
-        return ""
-    return "\n\n---\n\n".join(documents)
-
-
 async def _run_rag_pipeline(
     vector_store: VectorStore,
     question: str,
 ) -> tuple[str, str]:
     """
-    Exécute le pipeline RAG complet : embedding → recherche → génération.
+    Exécute le pipeline RAG état de l'art :
+    Embedding → Recherche Hybride Qdrant (Dense + Sparse BM25) → Re-Ranking FlashRank → Génération Multimodale.
 
     Retourne (answer, sources_footer).
     Lève ValueError si aucun document pertinent n'est trouvé.
     """
-    # ── Embedding de la question ──
+    from services.reranker import rerank_documents
+
+    # 1. Embedding Dense de la question (3072d)
     question_embedding = await get_embedding([question])
 
-    # ── Recherche des documents similaires ──
+    # 2. Recherche Hybride dans Qdrant (Dense + Sparse BM25)
     results = vector_store.query(
         query_embedding=question_embedding[0],
+        query_text=question,
         n_results=TOP_K,
     )
 
@@ -84,10 +77,38 @@ async def _run_rag_pipeline(
     if not documents:
         raise ValueError("Aucun document pertinent trouvé.")
 
-    # ── Construction du contexte et génération de la réponse ──
-    context = _build_context(results)
-    answer = await generate_answer(question=question, context=context)
-    sources_footer = _build_sources_footer(results)
+    # 3. Préparer les candidat(s) pour le Re-Ranking
+    raw_docs = []
+    for i in range(len(results["ids"])):
+        raw_docs.append({
+            "id": results["ids"][i],
+            "text": results["documents"][i],
+            "metadata": results["metadatas"][i],
+        })
+
+    # 4. Re-Ranking FlashRank (Filtrage anti-bruit)
+    ranked_docs = rerank_documents(query=question, documents=raw_docs, top_n=TOP_K)
+    if not ranked_docs:
+        raise ValueError("Aucun document pertinent retenu après filtrage.")
+
+    # 5. Concaténer le contexte et extraire les images locales
+    context_parts = []
+    image_paths = []
+    for doc in ranked_docs:
+        context_parts.append(doc["text"])
+        meta = doc.get("metadata", {})
+        if meta.get("type") == "image" and meta.get("local_path"):
+            image_paths.append(meta.get("local_path"))
+
+    context = "\n\n---\n\n".join(context_parts)
+
+    # 6. Générer la réponse avec le LLM (Raisonnement + Vision)
+    answer = await generate_answer(
+        question=question,
+        context=context,
+        image_paths=image_paths if image_paths else None,
+    )
+    sources_footer = _build_sources_footer(ranked_docs)
 
     return answer, sources_footer
 

@@ -1,16 +1,30 @@
 services:
-  # Force rebuild: v1.0.5
+  # Force rebuild: v2.0.0
   discord-rag-bot:
     build: .
     container_name: discord-rag-bot
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      - qdrant
     volumes:
       # Persister les logs sur l'hôte
       - ./logs:/app/logs
+      # Persister les données (images locales, etc.)
+      - ./data:/app/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-vectorstore
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage

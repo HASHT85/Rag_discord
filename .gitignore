@@ -1,7 +1,9 @@
 # Environnement
 .env
+serviceAccountKey.json
 
-# ChromaDB
+# Données locales & Qdrant & images
+data/
 chroma_db/
 
 # Python

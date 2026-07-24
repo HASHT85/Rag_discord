@@ -151,13 +151,15 @@ async def get_embedding(texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
-async def generate_answer(question: str, context: str) -> str:
+async def generate_answer(question: str, context: str, image_paths: list[str] = None) -> str:
     """
     Génère une réponse à une question en utilisant le contexte fourni.
+    Supporte la vision si des chemins d'images locaux associés aux documents sont fournis.
 
     Args:
         question: La question posée par l'utilisateur.
         context: Le contexte extrait du vectorstore (documents pertinents).
+        image_paths: Liste de chemins locaux vers les images associées aux documents récupérés.
 
     Returns:
         La réponse générée par le LLM.
@@ -169,8 +171,8 @@ async def generate_answer(question: str, context: str) -> str:
     system_prompt = (
         "Tu es un assistant intelligent intégré dans un serveur Discord. "
         "Tu réponds **toujours en français**.\n\n"
-        "Tu disposes du contexte suivant, extrait de messages et documents "
-        "indexés sur ce serveur Discord. Utilise **uniquement** ce contexte "
+        "Tu disposes du contexte suivant (texte et captures d'écran/images) "
+        "indexés sur ce serveur Discord. Utilise **uniquement** ces éléments "
         "pour répondre à la question de l'utilisateur.\n\n"
         "Règles :\n"
         "- Réponds de manière claire, concise et structurée.\n"
@@ -178,17 +180,50 @@ async def generate_answer(question: str, context: str) -> str:
         "- Si le contexte ne contient pas assez d'informations pour répondre, "
         "dis-le honnêtement.\n"
         "- N'invente jamais d'informations qui ne sont pas dans le contexte.\n\n"
-        f"--- CONTEXTE ---\n{context}\n--- FIN DU CONTEXTE ---"
+        f"--- CONTEXTE TEXTUEL ---\n{context}\n--- FIN DU CONTEXTE TEXTUEL ---"
     )
 
-    logger.debug("🤖 Génération de réponse pour : %s", question[:100])
+    # 1. Construire le contenu utilisateur (multimodal ou texte simple)
+    user_content = []
+    text_content = f"Question : {question}"
+    user_content.append({"type": "text", "text": text_content})
+
+    if image_paths:
+        import base64
+        import os
+        for path in image_paths:
+            if os.path.exists(path):
+                try:
+                    ext = path.rsplit(".", 1)[-1].lower() if "." in path else "png"
+                    mime_map = {
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "gif": "image/gif",
+                        "webp": "image/webp",
+                        "bmp": "image/bmp",
+                    }
+                    mime_type = mime_map.get(ext, "image/png")
+                    with open(path, "rb") as img_file:
+                        b64_data = base64.b64encode(img_file.read()).decode("utf-8")
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{b64_data}"
+                        }
+                    })
+                    logger.debug("🖼️ Image '%s' chargée dans le prompt multimodal.", path)
+                except Exception as exc:
+                    logger.error("❌ Erreur lors du chargement de l'image '%s' : %s", path, exc)
+
+    logger.debug("🤖 Génération de réponse pour : %s (images chargees : %d)", question[:100], len(user_content) - 1)
 
     async def _call():
         response = await _client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.3,
             max_tokens=1500,
@@ -198,13 +233,16 @@ async def generate_answer(question: str, context: str) -> str:
     response = await _retry_with_backoff(_call, description="génération LLM")
 
     answer = response.choices[0].message.content or ""
+    # Nettoyer les balises de réflexion <think>...</think> (DeepSeek-R1)
+    import re
+    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
 
     logger.info(
         "✅ Réponse générée (%d caractères, modèle=%s).",
         len(answer), LLM_MODEL,
     )
 
-    return answer.strip()
+    return answer
 
 
 async def describe_image(image_data: bytes, filename: str = "image.png") -> str | None:
@@ -293,3 +331,61 @@ async def describe_image(image_data: bytes, filename: str = "image.png") -> str 
     except Exception as e:
         logger.error("❌ Erreur lors de la description de '%s' : %s", filename, e)
         return None
+
+
+async def get_image_embedding(image_data: bytes, filename: str) -> list[float]:
+    """
+    Génère un embedding pour une image via le modèle multimodal d'OpenRouter.
+    """
+    # Déterminer le type MIME
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+    mime_map = {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "bmp": "image/bmp",
+    }
+    mime_type = mime_map.get(ext, "image/png")
+
+    # Encoder en base64
+    b64_image = base64.b64encode(image_data).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64_image}"
+
+    logger.debug("📐 Génération d'embedding multimodal pour l'image '%s'...", filename)
+
+    async def _call():
+        params = {
+            "model": EMBEDDING_MODEL,
+            "input": [
+                {
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url}
+                        }
+                    ]
+                }
+            ],
+            "encoding_format": "float",
+        }
+        if EMBEDDING_DIMENSIONS > 0:
+            params["extra_body"] = {"dimensions": EMBEDDING_DIMENSIONS}
+            
+        response = await _client.embeddings.create(**params)
+        return response
+
+    response = await _retry_with_backoff(_call, description="embedding image")
+    
+    # Récupérer le vecteur
+    embedding = response.data[0].embedding
+    logger.info(
+        "✅ Embedding image '%s' généré (dimension=%d).",
+        filename,
+        len(embedding),
+    )
+    return embedding
+
+
+
