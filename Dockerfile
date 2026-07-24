@@ -1,8 +1,9 @@
-# Build v2.0.0 Qdrant + FlashRank
 FROM python:3.12-slim
 
-# Définir le répertoire de travail
 WORKDIR /app
+
+# Installer git et dépendances système si besoin
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Copier et installer les dépendances en premier (cache Docker)
 COPY requirements.txt .
