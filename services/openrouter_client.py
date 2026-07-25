@@ -183,10 +183,9 @@ async def generate_answer(
         "de la manière la plus complète et exacte possible à l'utilisateur.\n\n"
         "Règles :\n"
         "- Réponds de manière claire, concise et structurée.\n"
-        "- **Extrais et liste TOUTES les informations demandées** (ex: tous les comptes Dofus, mots de passe, adresses e-mail, identifiants). "
-        "Si plusieurs documents ou captures d'écran contiennent des comptes différents (Compte 1, Compte 2, etc.), liste-les TOUS sans en omettre aucun !\n"
+        "- **Extrais et détaille TOUTES les informations présentées dans les documents et images du contexte** (ex: Compte 1, Compte 2, etc., avec chaque adresse e-mail, mot de passe, nom, prénom, date de naissance).\n"
+        "- Analyse attentivement chaque bloc du contexte : si plusieurs captures d'écran ou extraits sont fournis, liste-les TOUS sans en oublier aucun !\n"
         "- Cite tes sources quand c'est possible (catégorie, titre, auteur, canal).\n"
-        "- Si le contexte ne contient pas assez d'informations pour répondre, dis-le honnêtement.\n"
         "- N'invente jamais d'informations qui ne sont pas dans le contexte.\n\n"
         f"--- CONTEXTE TEXTUEL ---\n{context}\n--- FIN DU CONTEXTE TEXTUEL ---"
     )
