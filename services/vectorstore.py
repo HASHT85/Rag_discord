@@ -214,17 +214,6 @@ class VectorStore:
         except Exception as exc:
             logger.error("❌ Erreur lors de la suppression Qdrant : %s", exc, exc_info=True)
 
-    def clear_all(self) -> None:
-        """Purge intégralement la collection Qdrant en la réinitialisant à neuf."""
-        try:
-            self.client.delete_collection(collection_name=COLLECTION_NAME)
-            logger.info("🗑️ Collection Qdrant '%s' supprimée.", COLLECTION_NAME)
-            self._ensure_collection()
-            logger.info("✅ Collection Qdrant '%s' réinitialisée avec succès.", COLLECTION_NAME)
-        except Exception as exc:
-            logger.error("❌ Erreur lors de la purge de la collection Qdrant : %s", exc, exc_info=True)
-            raise exc
-
     def document_exists(self, doc_id: str) -> bool:
         """Vérifie si un document avec cet ID existe déjà."""
         try:

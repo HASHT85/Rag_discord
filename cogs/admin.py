@@ -456,33 +456,6 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────
-    #  /clear — Purge de la base RAG
-    # ─────────────────────────────────────────────
-    @app_commands.command(
-        name="clear",
-        description="🗑️ Vider et réinitialiser intégralement la base de données RAG",
-    )
-    async def clear_command(self, interaction: discord.Interaction) -> None:
-        """Purge tous les documents stockés dans Qdrant."""
-        await interaction.response.defer(thinking=True)
-        try:
-            self.vector_store.clear_all()
-            embed = discord.Embed(
-                title="🗑️ Base RAG purgée",
-                description="Tous les documents, notes et fichiers ont été supprimés de la base de données RAG.",
-                color=BLURPLE,
-            )
-            embed.set_footer(text="La base RAG est à nouveau vierge et prête.")
-            await interaction.followup.send(embed=embed)
-            logger.info("🗑️ Base RAG purgée par %s.", interaction.user)
-        except Exception as exc:
-            logger.error("Erreur lors de la purge RAG : %s", exc, exc_info=True)
-            await interaction.followup.send(
-                f"⚠️ Erreur lors de la suppression : `{exc}`",
-                ephemeral=True,
-            )
-
-    # ─────────────────────────────────────────────
     #  Gestion des erreurs de permissions
     # ─────────────────────────────────────────────
     async def cog_app_command_error(
