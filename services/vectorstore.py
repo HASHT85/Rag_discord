@@ -214,6 +214,31 @@ class VectorStore:
         except Exception as exc:
             logger.error("❌ Erreur lors de la suppression Qdrant : %s", exc, exc_info=True)
 
+    def delete_by_title(self, title: str) -> None:
+        """Supprime les documents correspondant au titre ou à la catégorie spécifiée."""
+        try:
+            self.client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        should=[
+                            models.FieldCondition(
+                                key="metadata.title",
+                                match=models.MatchValue(value=title),
+                            ),
+                            models.FieldCondition(
+                                key="metadata.category",
+                                match=models.MatchValue(value=title),
+                            ),
+                        ]
+                    )
+                ),
+            )
+            logger.info("✅ Documents purgés pour le titre/catégorie '%s'.", title)
+        except Exception as exc:
+            logger.error("❌ Erreur suppression par titre '%s' : %s", title, exc, exc_info=True)
+            raise exc
+
     def document_exists(self, doc_id: str) -> bool:
         """Vérifie si un document avec cet ID existe déjà."""
         try:

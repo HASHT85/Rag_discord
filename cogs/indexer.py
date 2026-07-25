@@ -353,6 +353,77 @@ class IndexerCog(commands.Cog):
         ]
         await self._index_info(interaction, categorie, titre, description, fichiers)
 
+    # ─────────────────────────────────────────────
+    #  Commande /delete — Supprimer un document spécifique
+    # ─────────────────────────────────────────────
+    @discord.app_commands.command(
+        name="delete",
+        description="🗑️ Supprimer un document ou une note spécifique de la base RAG par son titre",
+    )
+    @discord.app_commands.describe(
+        titre="Le titre exact ou la catégorie de la note/document à supprimer (ex: Openinnov)"
+    )
+    async def delete_command(self, interaction: discord.Interaction, titre: str) -> None:
+        """Supprime une note ou un document spécifique de la base Qdrant par son titre."""
+        await interaction.response.defer(thinking=True)
+        try:
+            self.vector_store.delete_by_title(titre)
+            embed = discord.Embed(
+                title="🗑️ Document supprimé",
+                description=f"Le document / la note intitulée **{titre}** a été supprimé(e) de la base RAG.",
+                color=0x5865F2,
+            )
+            embed.set_footer(text="La base RAG a été mise à jour.")
+            await interaction.followup.send(embed=embed)
+            logger.info("🗑️ Document '%s' supprimé par %s.", titre, interaction.user)
+        except Exception as exc:
+            logger.error("Erreur suppression document '%s' : %s", titre, exc, exc_info=True)
+            await interaction.followup.send(
+                f"⚠️ Erreur lors de la suppression : `{exc}`",
+                ephemeral=True,
+            )
+
+    # ─────────────────────────────────────────────
+    #  Commande /update — Modifier / Remplacer un document
+    # ─────────────────────────────────────────────
+    @discord.app_commands.command(
+        name="update",
+        description="✏️ Modifier / Remplacer une note ou un document existant dans la base RAG",
+    )
+    @discord.app_commands.describe(
+        titre="Le titre exact du document à modifier (ex: Openinnov)",
+        nouvelle_description="Le nouveau contenu textuel corrigé",
+        categorie="Catégorie (Optionnel - Défaut: Général)",
+        fichier="Nouveau fichier joint (optionnel)",
+        fichier2="2ème fichier joint (optionnel)",
+        fichier3="3ème fichier joint (optionnel)",
+    )
+    async def update_command(
+        self,
+        interaction: discord.Interaction,
+        titre: str,
+        nouvelle_description: str = "",
+        categorie: str = "Général",
+        fichier: discord.Attachment | None = None,
+        fichier2: discord.Attachment | None = None,
+        fichier3: discord.Attachment | None = None,
+    ) -> None:
+        """Supprime l'ancienne version puis ré-indexe la nouvelle version."""
+        await interaction.response.defer(thinking=True)
+        try:
+            # 1. Purger l'ancienne version
+            self.vector_store.delete_by_title(titre)
+
+            # 2. Indexer la nouvelle version corrigée
+            fichiers = [f for f in (fichier, fichier2, fichier3) if f is not None]
+            await self._index_info(interaction, categorie, titre, nouvelle_description, fichiers)
+        except Exception as exc:
+            logger.error("Erreur modification document '%s' : %s", titre, exc, exc_info=True)
+            await interaction.followup.send(
+                f"⚠️ Erreur lors de la modification : `{exc}`",
+                ephemeral=True,
+            )
+
 
 async def setup(bot: commands.Bot) -> None:
     """Point d'entrée pour charger le cog d'indexation."""
