@@ -256,72 +256,83 @@ class AdminCog(commands.Cog):
                     continue
 
                 try:
-                    # Traitement des pièces jointes
-                    file_type = "text"
-                    file_ext = ""
-                    source = "discord_message"
-                    page_or_sheet_count = 1
-                    attachment_name = None
-                    attachment_url = None
+                    timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
+                    # 1. Indexer le texte principal si présent
+                    if message.content and message.content.strip():
+                        full_text = build_document_text(
+                            category=category,
+                            title=title,
+                            content=content,
+                            author=str(message.author),
+                            channel=channel.name,
+                            timestamp=timestamp_str,
+                        )
+                        chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                        embeddings = await get_embedding(chunks)
+                        ids = [generate_doc_id(f"{message.id}_msg", idx) for idx in range(len(chunks))]
+                        metadatas = [
+                            {
+                                "message_id": str(message.id),
+                                "channel_id": str(channel.id),
+                                "author": str(message.author),
+                                "category": category,
+                                "title": title,
+                                "timestamp": timestamp_str,
+                                "has_attachment": False,
+                                "attachment_name": None,
+                                "attachment_url": None,
+                                "file_type": "text",
+                                "file_ext": "",
+                                "source": "discord_message",
+                                "page_or_sheet_count": 1,
+                                "chunk_index": idx,
+                                "total_chunks": len(chunks),
+                            }
+                            for idx in range(len(chunks))
+                        ]
+                        self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
+
+                    # 2. Indexer CHAQUE pièce jointe individuellement avec son propre ID et sa propre URL
                     if message.attachments:
-                        for attachment in message.attachments:
-                            if attachment_name is None:
-                                attachment_name = attachment.filename
-                                attachment_url = attachment.url
-                                source = attachment.filename
-                                file_ext = Path(attachment.filename).suffix.lower()
+                        for att_idx, attachment in enumerate(message.attachments):
                             if is_supported_attachment(attachment.filename):
                                 details = await extract_attachment_details(attachment)
-                                if details:
-                                    content += f"\n\n--- Pièce jointe : {attachment.filename} ---\n{details['text']}"
-                                    file_type = details.get("file_type", file_type)
-                                    file_ext = details.get("file_ext", file_ext)
-                                    page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
+                                if details and details.get("text"):
+                                    att_title = f"{title} - {attachment.filename}" if message.content else attachment.filename
+                                    att_full_text = build_document_text(
+                                        category=category,
+                                        title=att_title,
+                                        content=details["text"],
+                                        author=str(message.author),
+                                        channel=channel.name,
+                                        timestamp=timestamp_str,
+                                    )
+                                    chunks = chunk_text(att_full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                                    embeddings = await get_embedding(chunks)
+                                    ids = [generate_doc_id(f"{message.id}_att{att_idx}", idx) for idx in range(len(chunks))]
+                                    metadatas = [
+                                        {
+                                            "message_id": str(message.id),
+                                            "channel_id": str(channel.id),
+                                            "author": str(message.author),
+                                            "category": category,
+                                            "title": att_title,
+                                            "timestamp": timestamp_str,
+                                            "has_attachment": True,
+                                            "attachment_name": attachment.filename,
+                                            "attachment_url": attachment.url,
+                                            "file_type": details.get("file_type", "attachment"),
+                                            "file_ext": details.get("file_ext", Path(attachment.filename).suffix.lower()),
+                                            "source": attachment.filename,
+                                            "page_or_sheet_count": details.get("page_or_sheet_count", 1),
+                                            "chunk_index": idx,
+                                            "total_chunks": len(chunks),
+                                        }
+                                        for idx in range(len(chunks))
+                                    ]
+                                    self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
 
-                    # Construction du texte
-                    timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                    full_text = build_document_text(
-                        category=category,
-                        title=title,
-                        content=content,
-                        author=str(message.author),
-                        channel=channel.name,
-                        timestamp=timestamp_str,
-                    )
-
-                    # Chunks + embeddings
-                    chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
-                    embeddings = await get_embedding(chunks)
-
-                    ids = [generate_doc_id(message.id, idx) for idx in range(len(chunks))]
-                    metadatas = [
-                        {
-                            "message_id": str(message.id),
-                            "channel_id": str(channel.id),
-                            "author": str(message.author),
-                            "category": category,
-                            "title": title,
-                            "timestamp": timestamp_str,
-                            "has_attachment": bool(message.attachments),
-                            "attachment_name": attachment_name,
-                            "attachment_url": attachment_url,
-                            "file_type": file_type,
-                            "file_ext": file_ext,
-                            "source": source,
-                            "page_or_sheet_count": page_or_sheet_count,
-                            "chunk_index": idx,
-                            "total_chunks": len(chunks),
-                        }
-                        for idx in range(len(chunks))
-                    ]
-
-                    self.vector_store.add_documents(
-                        texts=chunks,
-                        metadatas=metadatas,
-                        ids=ids,
-                        embeddings=embeddings,
-                    )
                     indexed += 1
 
                 except Exception as exc:

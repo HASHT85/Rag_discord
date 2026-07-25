@@ -78,92 +78,101 @@ class IndexerCog(commands.Cog):
             return
 
         try:
-            # ── Traitement des pièces jointes ──
-            file_type = "text"
-            file_ext = ""
-            source = "discord_message"
-            page_or_sheet_count = 1
-            attachment_name = None
-            attachment_url = None
+            timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            indexed_files = []
+            total_chunks_count = 0
 
+            # ── 1. Indexer le texte principal si présent ──
+            if message.content and message.content.strip():
+                full_text = build_document_text(
+                    category=category,
+                    title=title,
+                    content=content,
+                    author=str(message.author),
+                    channel=message.channel.name,
+                    timestamp=timestamp_str,
+                )
+                chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                embeddings = await get_embedding(chunks)
+                ids = [generate_doc_id(f"{message.id}_msg", idx) for idx in range(len(chunks))]
+                metadatas = [
+                    {
+                        "message_id": str(message.id),
+                        "channel_id": str(message.channel.id),
+                        "author": str(message.author),
+                        "category": category,
+                        "title": title,
+                        "timestamp": timestamp_str,
+                        "has_attachment": False,
+                        "attachment_name": None,
+                        "attachment_url": None,
+                        "file_type": "text",
+                        "file_ext": "",
+                        "source": "discord_message",
+                        "page_or_sheet_count": 1,
+                        "chunk_index": idx,
+                        "total_chunks": len(chunks),
+                    }
+                    for idx in range(len(chunks))
+                ]
+                self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
+                total_chunks_count += len(chunks)
+
+            # ── 2. Indexer CHAQUE pièce jointe individuellement avec son propre ID et sa propre URL ──
             if message.attachments:
-                for attachment in message.attachments:
-                    if attachment_name is None:
-                        attachment_name = attachment.filename
-                        attachment_url = attachment.url
-                        source = attachment.filename
-                        file_ext = Path(attachment.filename).suffix.lower()
+                for att_idx, attachment in enumerate(message.attachments):
                     if is_supported_attachment(attachment.filename):
                         details = await extract_attachment_details(attachment)
-                        if details:
-                            content += f"\n\n--- Pièce jointe : {attachment.filename} ---\n{details['text']}"
-                            file_type = details.get("file_type", file_type)
-                            file_ext = details.get("file_ext", file_ext)
-                            page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
-
-            # ── Construction du texte complet du document ──
-            timestamp_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            full_text = build_document_text(
-                category=category,
-                title=title,
-                content=content,
-                author=str(message.author),
-                channel=message.channel.name,
-                timestamp=timestamp_str,
-            )
-
-            # ── Découpage en chunks si nécessaire ──
-            chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
-
-            # ── Génération des embeddings ──
-            embeddings = await get_embedding(chunks)
-
-            # ── Préparation des métadonnées et IDs pour chaque chunk ──
-            ids: list[str] = []
-            metadatas: list[dict] = []
-
-            for idx, _chunk in enumerate(chunks):
-                doc_id = generate_doc_id(message.id, chunk_index=idx)
-                ids.append(doc_id)
-                metadatas.append({
-                    "message_id": str(message.id),
-                    "channel_id": str(message.channel.id),
-                    "author": str(message.author),
-                    "category": category,
-                    "title": title,
-                    "timestamp": timestamp_str,
-                    "has_attachment": bool(message.attachments),
-                    "attachment_name": attachment_name,
-                    "attachment_url": attachment_url,
-                    "file_type": file_type,
-                    "file_ext": file_ext,
-                    "source": source,
-                    "page_or_sheet_count": page_or_sheet_count,
-                    "chunk_index": idx,
-                    "total_chunks": len(chunks),
-                })
-
-            # ── Stockage dans ChromaDB ──
-            self.vector_store.add_documents(
-                texts=chunks,
-                metadatas=metadatas,
-                ids=ids,
-                embeddings=embeddings,
-            )
+                        if details and details.get("text"):
+                            att_title = f"{title} - {attachment.filename}" if message.content else attachment.filename
+                            att_full_text = build_document_text(
+                                category=category,
+                                title=att_title,
+                                content=details["text"],
+                                author=str(message.author),
+                                channel=message.channel.name,
+                                timestamp=timestamp_str,
+                            )
+                            chunks = chunk_text(att_full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                            embeddings = await get_embedding(chunks)
+                            ids = [generate_doc_id(f"{message.id}_att{att_idx}", idx) for idx in range(len(chunks))]
+                            metadatas = [
+                                {
+                                    "message_id": str(message.id),
+                                    "channel_id": str(message.channel.id),
+                                    "author": str(message.author),
+                                    "category": category,
+                                    "title": att_title,
+                                    "timestamp": timestamp_str,
+                                    "has_attachment": True,
+                                    "attachment_name": attachment.filename,
+                                    "attachment_url": attachment.url,
+                                    "file_type": details.get("file_type", "attachment"),
+                                    "file_ext": details.get("file_ext", Path(attachment.filename).suffix.lower()),
+                                    "source": attachment.filename,
+                                    "page_or_sheet_count": details.get("page_or_sheet_count", 1),
+                                    "chunk_index": idx,
+                                    "total_chunks": len(chunks),
+                                }
+                                for idx in range(len(chunks))
+                            ]
+                            self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
+                            indexed_files.append(attachment.filename)
+                            total_chunks_count += len(chunks)
 
             # ── Confirmation visuelle ──
             await message.add_reaction("✅")
+            info_str = f" (**{', '.join(indexed_files)}**)" if indexed_files else ""
             await message.reply(
-                f"📄 Indexé : **{title}** [{category}] — {len(chunks)} chunk(s)",
+                f"📄 Indexé : **{title}**{info_str} — {total_chunks_count} chunk(s)",
                 delete_after=15,
             )
             logger.info(
-                "Message %s indexé : '%s' [%s] — %d chunk(s)",
-                message.id, title, category, len(chunks),
+                "Message %s indexé : '%s' (%d fichier(s)) — %d chunk(s)",
+                message.id, title, len(indexed_files), total_chunks_count,
             )
 
         except Exception as exc:
-            # ── Gestion d'erreur : signaler visuellement et loguer ──
             logger.error("Erreur lors de l'indexation du message %s : %s", message.id, exc, exc_info=True)
             try:
                 await message.add_reaction("⚠️")
@@ -188,85 +197,88 @@ class IndexerCog(commands.Cog):
     ) -> None:
         """Logique commune d'indexation pour toutes les commandes slash."""
         try:
-            content = description
+            timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            indexed_files = []
+            total_chunks_count = 0
+            base_id = int(interaction.id)
 
-            # ── Traitement des pièces jointes ──
-            file_type = "text"
-            file_ext = ""
-            source = "discord_message"
-            page_or_sheet_count = 1
-            attachment_name = None
-            attachment_url = None
-            processed_files = []
+            # ── 1. Indexer la description textuelle si présente ──
+            if description and description.strip():
+                full_text = build_document_text(
+                    category=sujet,
+                    title=titre,
+                    content=description,
+                    author=str(interaction.user),
+                    channel=interaction.channel.name if interaction.channel else "inconnu",
+                    timestamp=timestamp_str,
+                )
+                chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                embeddings = await get_embedding(chunks)
+                ids = [generate_doc_id(f"{base_id}_desc", idx) for idx in range(len(chunks))]
+                metadatas = [
+                    {
+                        "message_id": str(interaction.id),
+                        "channel_id": str(interaction.channel_id),
+                        "author": str(interaction.user),
+                        "category": sujet,
+                        "title": titre,
+                        "timestamp": timestamp_str,
+                        "has_attachment": False,
+                        "attachment_name": None,
+                        "attachment_url": None,
+                        "file_type": "text",
+                        "file_ext": "",
+                        "source": "slash_command",
+                        "page_or_sheet_count": 1,
+                        "chunk_index": idx,
+                        "total_chunks": len(chunks),
+                    }
+                    for idx in range(len(chunks))
+                ]
+                self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
+                total_chunks_count += len(chunks)
 
+            # ── 2. Indexer CHAQUE pièce jointe individuellement ──
             if fichiers:
-                for fichier in fichiers:
-                    if attachment_name is None:
-                        attachment_name = fichier.filename
-                        attachment_url = fichier.url
-                        source = fichier.filename
-                        file_ext = Path(fichier.filename).suffix.lower()
+                for att_idx, fichier in enumerate(fichiers):
                     if is_supported_attachment(fichier.filename):
                         details = await extract_attachment_details(fichier)
-                        if details:
-                            content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{details['text']}"
-                            file_type = details.get("file_type", file_type)
-                            file_ext = details.get("file_ext", file_ext)
-                            page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
-                            processed_files.append(fichier.filename)
-                    else:
-                        logger.warning("Format non supporté ignoré dans /add : %s", fichier.filename)
-
-            # ── Construction du texte complet ──
-            timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            full_text = build_document_text(
-                category=sujet,
-                title=titre,
-                content=content,
-                author=str(interaction.user),
-                channel=interaction.channel.name if interaction.channel else "inconnu",
-                timestamp=timestamp_str,
-            )
-
-            # ── Découpage en chunks ──
-            chunks = chunk_text(full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
-
-            # ── Génération des embeddings ──
-            embeddings = await get_embedding(chunks)
-
-            # ── Préparation des métadonnées et IDs ──
-            base_id = int(interaction.id)
-            ids: list[str] = []
-            metadatas: list[dict] = []
-
-            for idx, _chunk in enumerate(chunks):
-                doc_id = generate_doc_id(base_id, chunk_index=idx)
-                ids.append(doc_id)
-                metadatas.append({
-                    "message_id": str(interaction.id),
-                    "channel_id": str(interaction.channel_id),
-                    "author": str(interaction.user),
-                    "category": sujet,
-                    "title": titre,
-                    "timestamp": timestamp_str,
-                    "has_attachment": bool(processed_files),
-                    "attachment_name": attachment_name,
-                    "attachment_url": attachment_url,
-                    "file_type": file_type,
-                    "file_ext": file_ext,
-                    "source": source,
-                    "page_or_sheet_count": page_or_sheet_count,
-                    "chunk_index": idx,
-                    "total_chunks": len(chunks),
-                })
-
-            # ── Stockage dans Qdrant ──
-            self.vector_store.add_documents(
-                texts=chunks,
-                metadatas=metadatas,
-                ids=ids,
-                embeddings=embeddings,
-            )
+                        if details and details.get("text"):
+                            att_title = f"{titre} - {fichier.filename}" if description else f"{titre} ({fichier.filename})"
+                            att_full_text = build_document_text(
+                                category=sujet,
+                                title=att_title,
+                                content=details["text"],
+                                author=str(interaction.user),
+                                channel=interaction.channel.name if interaction.channel else "inconnu",
+                                timestamp=timestamp_str,
+                            )
+                            chunks = chunk_text(att_full_text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+                            embeddings = await get_embedding(chunks)
+                            ids = [generate_doc_id(f"{base_id}_att{att_idx}", idx) for idx in range(len(chunks))]
+                            metadatas = [
+                                {
+                                    "message_id": str(interaction.id),
+                                    "channel_id": str(interaction.channel_id),
+                                    "author": str(interaction.user),
+                                    "category": sujet,
+                                    "title": att_title,
+                                    "timestamp": timestamp_str,
+                                    "has_attachment": True,
+                                    "attachment_name": fichier.filename,
+                                    "attachment_url": fichier.url,
+                                    "file_type": details.get("file_type", "attachment"),
+                                    "file_ext": details.get("file_ext", Path(fichier.filename).suffix.lower()),
+                                    "source": fichier.filename,
+                                    "page_or_sheet_count": details.get("page_or_sheet_count", 1),
+                                    "chunk_index": idx,
+                                    "total_chunks": len(chunks),
+                                }
+                                for idx in range(len(chunks))
+                            ]
+                            self.vector_store.add_documents(texts=chunks, metadatas=metadatas, ids=ids, embeddings=embeddings)
+                            indexed_files.append(fichier.filename)
+                            total_chunks_count += len(chunks)
 
             embed = discord.Embed(
                 title=f"📄 {sujet} indexé(e)",
@@ -275,14 +287,14 @@ class IndexerCog(commands.Cog):
             embed.add_field(name="📝 Titre", value=titre, inline=False)
             if description:
                 embed.add_field(name="📄 Description", value=description[:300], inline=False)
-            if processed_files:
-                embed.add_field(name="📎 Fichier(s) joint(s)", value=", ".join(processed_files), inline=True)
-            embed.set_footer(text=f"{len(chunks)} chunk(s) • Par {interaction.user.display_name}")
+            if indexed_files:
+                embed.add_field(name="📎 Fichier(s) joint(s)", value=", ".join(indexed_files), inline=True)
+            embed.set_footer(text=f"{total_chunks_count} chunk(s) • Par {interaction.user.display_name}")
 
             await interaction.followup.send(embed=embed)
             logger.info(
                 "/add : '%s' indexé avec %d fichier(s) — %d chunk(s) par %s",
-                titre, len(processed_files), len(chunks), interaction.user,
+                titre, len(indexed_files), total_chunks_count, interaction.user,
             )
 
         except Exception as exc:
