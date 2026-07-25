@@ -119,11 +119,11 @@ async def _run_rag_pipeline(
     # 1. Embedding Dense de la question (3072d)
     question_embedding = await get_embedding([retrieval_query])
 
-    # 2. Recherche Hybride dans Qdrant (Dense + Sparse BM25)
+    # 2. Recherche Hybride dans Qdrant (Dense + Sparse BM25) — Extraire 20 candidats
     results = vector_store.query(
         query_embedding=question_embedding[0],
         query_text=retrieval_query,
-        n_results=TOP_K,
+        n_results=max(TOP_K, 20),
     )
 
     documents = results.get("documents", [])
@@ -140,17 +140,28 @@ async def _run_rag_pipeline(
         })
 
     # 4. Re-Ranking FlashRank (Filtrage anti-bruit)
-    ranked_docs = rerank_documents(query=retrieval_query, documents=raw_docs, top_n=TOP_K)
+    ranked_docs = rerank_documents(query=retrieval_query, documents=raw_docs, top_n=max(TOP_K, 20))
     if not ranked_docs:
         raise ValueError("Aucun document pertinent retenu après filtrage.")
 
-    # 5. Concaténer le contexte et extraire les fichiers joints
+    # 5. Diversification par source : Garantir que tous les documents sources sont représentés
+    diverse_docs = []
+    doc_chunk_counts: dict[str, int] = {}
+    for doc in ranked_docs:
+        meta = doc.get("metadata", {})
+        source_key = meta.get("attachment_url") or meta.get("source") or meta.get("title") or doc.get("id")
+        current_count = doc_chunk_counts.get(source_key, 0)
+        if current_count < 2:  # Prendre au maximum 2 chunks par fichier/document source
+            diverse_docs.append(doc)
+            doc_chunk_counts[source_key] = current_count + 1
+
+    # 6. Concaténer le contexte et extraire les fichiers joints
     context_parts = []
     image_paths: list[str] = []
     attachments: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
-    for doc_idx, doc in enumerate(ranked_docs, start=1):
+    for doc_idx, doc in enumerate(diverse_docs, start=1):
         meta = doc.get("metadata", {})
         doc_title = meta.get("title") or meta.get("attachment_name") or f"Document {doc_idx}"
         formatted_doc = f"=== DOCUMENT #{doc_idx} [{doc_title}] ===\n{doc['text']}"
@@ -167,7 +178,7 @@ async def _run_rag_pipeline(
 
     # Fallback dynamique : Si l'URL n'était pas stockée en métadonnée (anciens index), la récupérer directement sur Discord
     if not attachments and bot:
-        for doc in ranked_docs:
+        for doc in diverse_docs:
             meta = doc.get("metadata", {})
             if meta.get("has_attachment") or meta.get("attachment_url"):
                 channel_id = meta.get("channel_id")
@@ -188,14 +199,14 @@ async def _run_rag_pipeline(
 
     context = "\n\n---\n\n".join(context_parts)
 
-    # 6. Générer la réponse avec le LLM (Raisonnement + Vision + Mémoire de conversation)
+    # 7. Générer la réponse avec le LLM (Raisonnement + Vision + Mémoire de conversation)
     answer = await generate_answer(
         question=question,
         context=context,
         image_paths=image_paths if image_paths else None,
         conversation_history=conversation_history,
     )
-    sources_footer = _build_sources_footer(ranked_docs)
+    sources_footer = _build_sources_footer(diverse_docs)
 
     return answer, sources_footer, attachments
 

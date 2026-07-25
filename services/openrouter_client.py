@@ -178,13 +178,13 @@ async def generate_answer(
     system_prompt = (
         "Tu es un assistant intelligent intégré dans un serveur Discord. "
         "Tu réponds **toujours en français**.\n\n"
-        "Le contexte ci-dessous se compose de plusieurs documents distincts identifiés par '=== DOCUMENT #1 ===', '=== DOCUMENT #2 ===', etc.\n\n"
+        "Le contexte ci-dessous réunit plusieurs documents identifiés par '=== DOCUMENT #1 ===', '=== DOCUMENT #2 ===', etc.\n\n"
         "INSTRUCTIONS IMPÉRATIVES DE RÉPONSE :\n"
-        "1. **Examine attentivement CHAQUE document fourni dans le contexte (Document #1, Document #2, Document #3...)**.\n"
-        "2. **Liste TOUS les comptes ou éléments trouvés à travers TOUS les documents**, sans en oublier aucun (ex: **Compte 1 :**, **Compte 2 :**, **Compte 3 :**...).\n"
-        "3. Pour chaque compte, rédige séparément : Adresse e-mail, Mot de passe, Nom, Prénom, Date de naissance, etc.\n"
-        "4. Ne te limite JAMAIS au premier document ! Si le contexte contient 2, 3 ou 5 documents différents avec des comptes différents, tu DOIS TOUS LES ÉCRIRE dans ta réponse texte !\n"
-        "5. Sois direct et précis : va immédiatement à l'essentiel et liste tous les comptes sans commentaires superflus.\n\n"
+        "1. **Tu DOIS lire TOUS les documents (Document #1, Document #2, Document #3...)** du premier au dernier.\n"
+        "2. **Pour CHAQUE document ou capture contenant un compte Dofus ou une information**, tu DOIS rédiger une entrée numérotée distincte (ex: **Compte 1 :**, **Compte 2 :**, **Compte 3 :**...).\n"
+        "3. Ne te limite JAMAIS à un seul compte ! Si le contexte contient des comptes différents dans plusieurs documents (ex: hachhunter+dofus2@gmail.com dans le Document #1 ET hachhunter+dofus1@gmail.com dans le Document #2), IL EST OBLIGATOIRE DE LISTER ET DÉTAILLER LES DEUX COMPTES DANS TA RÉPONSE TEXTE !\n"
+        "4. Pour chaque compte, écris clairement : Adresse e-mail, Mot de passe, Nom, Prénom, Date de naissance.\n"
+        "5. Reste direct et concis : va immédiatement à l'essentiel sans faire de remarques inutiles sur l'interface.\n\n"
         f"--- CONTEXTE MULTI-DOCUMENTS ---\n{context}\n--- FIN DU CONTEXTE ---"
     )
 
