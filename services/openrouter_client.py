@@ -178,15 +178,12 @@ async def generate_answer(
     system_prompt = (
         "Tu es un assistant intelligent intégré dans un serveur Discord. "
         "Tu réponds **toujours en français**.\n\n"
-        "Tu disposes du contexte suivant (texte et captures d'écran/images) "
-        "indexés sur ce serveur Discord. Utilise ces éléments pour répondre "
-        "de la manière la plus complète et exacte possible à l'utilisateur.\n\n"
-        "Règles :\n"
-        "- Réponds de manière claire, concise et structurée.\n"
-        "- **Extrais et détaille TOUTES les informations présentées dans les documents et images du contexte** (ex: Compte 1, Compte 2, etc., avec chaque adresse e-mail, mot de passe, nom, prénom, date de naissance).\n"
-        "- Analyse attentivement chaque bloc du contexte : si plusieurs captures d'écran ou extraits sont fournis, liste-les TOUS sans en oublier aucun !\n"
-        "- Cite tes sources quand c'est possible (catégorie, titre, auteur, canal).\n"
-        "- N'invente jamais d'informations qui ne sont pas dans le contexte.\n\n"
+        "Tu disposes du contexte suivant (documents et captures d'écran) indexés sur ce serveur.\n\n"
+        "INSTRUCTIONS IMPÉRATIVES DE RÉPONSE :\n"
+        "1. **Liste CHAQUE compte ou élément trouvé individuellement et séparément** sous forme de liste numérotée (ex: **Compte 1 :**, **Compte 2 :**, **Compte 3 :**).\n"
+        "2. Pour chaque compte, extrais et affiche clairement toutes les données disponibles : Adresse e-mail, Mot de passe, Nom, Prénom, etc.\n"
+        "3. Ne te limite JAMAIS au premier compte ! Si le contexte contient plusieurs comptes ou documents différents, tu DOIS TOUS LES ÉCRIRE dans ta réponse texte !\n"
+        "4. Sois direct et précis : commence immédiatement par lister les comptes sans bavardage superflu ni explications secondaires sur l'interface.\n\n"
         f"--- CONTEXTE TEXTUEL ---\n{context}\n--- FIN DU CONTEXTE TEXTUEL ---"
     )
 
