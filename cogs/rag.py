@@ -245,9 +245,8 @@ def _build_response_embeds(
     # Footer sur le dernier embed de texte
     embeds[-1].set_footer(text=_truncate(sources_footer, 2048))
 
-    # Gérer l'affichage des fichiers joints et aperçus d'images
+    # Gérer l'affichage des fichiers joints (sans prévisualisation d'image)
     if attachments:
-        # 1. Liens de téléchargement clairs (cliquer ouvre l'image/fichier dans le navigateur)
         last_embed = embeds[-1]
         file_links = [
             f"📥 **[{att['name']}]({att['url']})**"
@@ -259,19 +258,6 @@ def _build_response_embeds(
             value="\n".join(file_links[:10]),
             inline=False,
         )
-
-        # 2. Aperçus d'images intégrés directement sous l'embed principal (sans titre sous-embed superflu)
-        image_atts = [att for att in attachments if _is_image_attachment(att["name"], att["url"])]
-        if image_atts:
-            shared_url = image_atts[0]["url"]
-            embeds[0].url = shared_url
-            embeds[0].set_image(url=shared_url)
-
-            # Pour les images 2, 3, 4..., lier les images via la même URL d'embed pour un rendu galerie natif sans sous-titre
-            for att in image_atts[1:4]:
-                img_embed = discord.Embed(url=shared_url, color=BLURPLE)
-                img_embed.set_image(url=att["url"])
-                embeds.append(img_embed)
 
     return embeds
 
