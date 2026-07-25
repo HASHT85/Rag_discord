@@ -316,8 +316,15 @@ class IndexerCog(commands.Cog):
         titre="Le titre ou résumé du document",
         description="Le contenu textuel (optionnel si un fichier est joint)",
         fichier="Premier fichier joint (PDF, Word, Excel, Python, image, etc. - optionnel)",
-        fichier2="Deuxième fichier joint (optionnel)",
-        fichier3="Troisième fichier joint (optionnel)",
+        fichier2="2ème fichier joint (optionnel)",
+        fichier3="3ème fichier joint (optionnel)",
+        fichier4="4ème fichier joint (optionnel)",
+        fichier5="5ème fichier joint (optionnel)",
+        fichier6="6ème fichier joint (optionnel)",
+        fichier7="7ème fichier joint (optionnel)",
+        fichier8="8ème fichier joint (optionnel)",
+        fichier9="9ème fichier joint (optionnel)",
+        fichier10="10ème fichier joint (optionnel)",
         categorie="Catégorie (Optionnel - Défaut: Général)",
     )
     async def add_command(
@@ -328,10 +335,22 @@ class IndexerCog(commands.Cog):
         fichier: discord.Attachment | None = None,
         fichier2: discord.Attachment | None = None,
         fichier3: discord.Attachment | None = None,
+        fichier4: discord.Attachment | None = None,
+        fichier5: discord.Attachment | None = None,
+        fichier6: discord.Attachment | None = None,
+        fichier7: discord.Attachment | None = None,
+        fichier8: discord.Attachment | None = None,
+        fichier9: discord.Attachment | None = None,
+        fichier10: discord.Attachment | None = None,
         categorie: str = "Général",
     ) -> None:
         await interaction.response.defer(thinking=True)
-        fichiers = [f for f in (fichier, fichier2, fichier3) if f is not None]
+        fichiers = [
+            f for f in (
+                fichier, fichier2, fichier3, fichier4, fichier5,
+                fichier6, fichier7, fichier8, fichier9, fichier10
+            ) if f is not None
+        ]
         await self._index_info(interaction, categorie, titre, description, fichiers)
 
 
