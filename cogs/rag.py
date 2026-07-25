@@ -146,6 +146,7 @@ async def _run_rag_pipeline(
 
     # 5. Concaténer le contexte et extraire les fichiers joints
     context_parts = []
+    image_paths: list[str] = []
     attachments: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
@@ -154,6 +155,9 @@ async def _run_rag_pipeline(
         doc_title = meta.get("title") or meta.get("attachment_name") or f"Document {doc_idx}"
         formatted_doc = f"=== DOCUMENT #{doc_idx} [{doc_title}] ===\n{doc['text']}"
         context_parts.append(formatted_doc)
+
+        if meta.get("type") == "image" and meta.get("local_path"):
+            image_paths.append(meta.get("local_path"))
 
         url = meta.get("attachment_url")
         name = meta.get("attachment_name") or meta.get("title") or "Fichier joint"
