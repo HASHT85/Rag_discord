@@ -184,38 +184,38 @@ class IndexerCog(commands.Cog):
         sujet: str,
         titre: str,
         description: str,
-        fichier: discord.Attachment | None = None,
+        fichiers: list[discord.Attachment] | None = None,
     ) -> None:
         """Logique commune d'indexation pour toutes les commandes slash."""
         try:
             content = description
 
-            # ── Traitement du fichier joint ──
+            # ── Traitement des pièces jointes ──
             file_type = "text"
             file_ext = ""
             source = "discord_message"
             page_or_sheet_count = 1
             attachment_name = None
             attachment_url = None
+            processed_files = []
 
-            if fichier is not None:
-                attachment_name = fichier.filename
-                attachment_url = fichier.url
-                source = fichier.filename
-                file_ext = Path(fichier.filename).suffix.lower()
-                if is_supported_attachment(fichier.filename):
-                    details = await extract_attachment_details(fichier)
-                    if details:
-                        content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{details['text']}"
-                        file_type = details.get("file_type", file_type)
-                        file_ext = details.get("file_ext", file_ext)
-                        page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
-                else:
-                    await interaction.followup.send(
-                        f"⚠️ Format de fichier non supporté : `{fichier.filename}`",
-                        ephemeral=True,
-                    )
-                    return
+            if fichiers:
+                for fichier in fichiers:
+                    if attachment_name is None:
+                        attachment_name = fichier.filename
+                        attachment_url = fichier.url
+                        source = fichier.filename
+                        file_ext = Path(fichier.filename).suffix.lower()
+                    if is_supported_attachment(fichier.filename):
+                        details = await extract_attachment_details(fichier)
+                        if details:
+                            content += f"\n\n--- Pièce jointe : {fichier.filename} ---\n{details['text']}"
+                            file_type = details.get("file_type", file_type)
+                            file_ext = details.get("file_ext", file_ext)
+                            page_or_sheet_count = details.get("page_or_sheet_count", page_or_sheet_count)
+                            processed_files.append(fichier.filename)
+                    else:
+                        logger.warning("Format non supporté ignoré dans /add : %s", fichier.filename)
 
             # ── Construction du texte complet ──
             timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -249,7 +249,7 @@ class IndexerCog(commands.Cog):
                     "category": sujet,
                     "title": titre,
                     "timestamp": timestamp_str,
-                    "has_attachment": fichier is not None,
+                    "has_attachment": bool(processed_files),
                     "attachment_name": attachment_name,
                     "attachment_url": attachment_url,
                     "file_type": file_type,
@@ -260,7 +260,7 @@ class IndexerCog(commands.Cog):
                     "total_chunks": len(chunks),
                 })
 
-            # ── Stockage dans ChromaDB ──
+            # ── Stockage dans Qdrant ──
             self.vector_store.add_documents(
                 texts=chunks,
                 metadatas=metadatas,
@@ -268,40 +268,25 @@ class IndexerCog(commands.Cog):
                 embeddings=embeddings,
             )
 
-            # ── Couleurs par sujet ──
-            colors = {
-                "Note": 0xFEE75C,        # Jaune
-                "Documentation": 0x5865F2, # Bleu Discord
-                "Procédure": 0xEB459E,     # Rose
-                "Tutoriel": 0x57F287,      # Vert
-                "Info": 0xED4245,          # Rouge
-            }
-            icons = {
-                "Note": "📝",
-                "Documentation": "📚",
-                "Procédure": "📋",
-                "Tutoriel": "🎓",
-                "Info": "ℹ️",
-            }
-
             embed = discord.Embed(
-                title=f"{icons.get(sujet, '📄')} {sujet} indexé(e)",
-                color=colors.get(sujet, 0x5865F2),
+                title=f"📄 {sujet} indexé(e)",
+                color=0x5865F2,
             )
             embed.add_field(name="📝 Titre", value=titre, inline=False)
-            embed.add_field(name="📄 Description", value=description[:300], inline=False)
-            if fichier:
-                embed.add_field(name="📎 Fichier", value=fichier.filename, inline=True)
+            if description:
+                embed.add_field(name="📄 Description", value=description[:300], inline=False)
+            if processed_files:
+                embed.add_field(name="📎 Fichier(s) joint(s)", value=", ".join(processed_files), inline=True)
             embed.set_footer(text=f"{len(chunks)} chunk(s) • Par {interaction.user.display_name}")
 
             await interaction.followup.send(embed=embed)
             logger.info(
-                "/%s : '%s' indexé — %d chunk(s) par %s",
-                sujet.lower(), titre, len(chunks), interaction.user,
+                "/add : '%s' indexé avec %d fichier(s) — %d chunk(s) par %s",
+                titre, len(processed_files), len(chunks), interaction.user,
             )
 
         except Exception as exc:
-            logger.error("Erreur indexation /%s : %s", sujet.lower(), exc, exc_info=True)
+            logger.error("Erreur indexation /add : %s", exc, exc_info=True)
             await interaction.followup.send(
                 f"⚠️ Erreur lors de l'indexation : `{exc}`",
                 ephemeral=True,
@@ -313,12 +298,14 @@ class IndexerCog(commands.Cog):
 
     @discord.app_commands.command(
         name="add",
-        description="➕ Ajouter un document, une note ou un fichier à la base RAG (catégorie optionnelle)",
+        description="➕ Ajouter un document, une note ou des fichiers à la base RAG",
     )
     @discord.app_commands.describe(
         titre="Le titre ou résumé du document",
         description="Le contenu textuel (optionnel si un fichier est joint)",
-        fichier="Fichier joint (PDF, Word, Excel, Python, image, etc. - optionnel)",
+        fichier="Premier fichier joint (PDF, Word, Excel, Python, image, etc. - optionnel)",
+        fichier2="Deuxième fichier joint (optionnel)",
+        fichier3="Troisième fichier joint (optionnel)",
         categorie="Catégorie (Optionnel - Défaut: Général)",
     )
     async def add_command(
@@ -327,10 +314,13 @@ class IndexerCog(commands.Cog):
         titre: str,
         description: str = "",
         fichier: discord.Attachment | None = None,
+        fichier2: discord.Attachment | None = None,
+        fichier3: discord.Attachment | None = None,
         categorie: str = "Général",
     ) -> None:
         await interaction.response.defer(thinking=True)
-        await self._index_info(interaction, categorie, titre, description, fichier)
+        fichiers = [f for f in (fichier, fichier2, fichier3) if f is not None]
+        await self._index_info(interaction, categorie, titre, description, fichiers)
 
 
 async def setup(bot: commands.Bot) -> None:
