@@ -124,14 +124,26 @@ class AdminCog(commands.Cog):
             logger.warning("Impossible d'envoyer le message de bienvenue dans %s : %s", output_channel, exc)
 
     # ─────────────────────────────────────────────
-    #  /status — État du bot
+    #  /status et /stats — État du bot et statistiques
     # ─────────────────────────────────────────────
     @app_commands.command(
         name="status",
-        description="Afficher l'état actuel du bot RAG (documents, canaux, uptime…).",
+        description="📊 Afficher l'état actuel du bot RAG (documents, canaux, uptime…).",
     )
     async def status(self, interaction: discord.Interaction) -> None:
         """Affiche un résumé de l'état du bot."""
+        await self._show_status(interaction)
+
+    @app_commands.command(
+        name="stats",
+        description="📊 Afficher les statistiques et le nombre de documents indexés dans la base RAG.",
+    )
+    async def stats(self, interaction: discord.Interaction) -> None:
+        """Affiche les statistiques de la base RAG."""
+        await self._show_status(interaction)
+
+    async def _show_status(self, interaction: discord.Interaction) -> None:
+        """Méthode interne pour construire et envoyer l'embed de statut."""
         await interaction.response.defer(thinking=True)
 
         # ── Statistiques du VectorStore ──
@@ -152,22 +164,22 @@ class AdminCog(commands.Cog):
 
         # ── Construction de l'embed ──
         embed = discord.Embed(
-            title="📊 État du Bot RAG",
+            title="📊 Statistiques & État de la base RAG",
             color=BLURPLE,
             timestamp=datetime.now(timezone.utc),
         )
         embed.add_field(
-            name="📚 Documents indexés",
-            value=f"`{stats.get('total_documents', 0)}`",
+            name="📚 Documents & Éléments indexés",
+            value=f"**`{stats.get('total_documents', 0)}`** fragments dans Qdrant",
             inline=True,
         )
         embed.add_field(
-            name="⏱️ Uptime",
+            name="⏱️ Temps de fonctionnement",
             value=f"`{uptime_str}`",
             inline=True,
         )
         embed.add_field(
-            name="🤖 Modèle LLM",
+            name="🤖 Modèle de raisonnement",
             value=f"`{LLM_MODEL}`",
             inline=False,
         )
@@ -177,18 +189,18 @@ class AdminCog(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="📥 Canal d'entrée",
+            name="📥 Canal d'indexation",
             value=input_mention,
             inline=True,
         )
         embed.add_field(
-            name="📤 Canal de sortie",
+            name="📤 Canal de réponses",
             value=output_mention,
             inline=True,
         )
         embed.add_field(
             name="⚙️ Paramètres RAG",
-            value=f"Chunk : `{CHUNK_SIZE}` | Overlap : `{CHUNK_OVERLAP}`",
+            value=f"Taille de fragment : `{CHUNK_SIZE}` | Recouvrement : `{CHUNK_OVERLAP}`",
             inline=False,
         )
         embed.set_footer(text=f"Serveurs : {len(self.bot.guilds)}")
