@@ -144,18 +144,17 @@ async def _run_rag_pipeline(
     if not ranked_docs:
         raise ValueError("Aucun document pertinent retenu après filtrage.")
 
-    # 5. Concaténer le contexte et extraire les images / fichiers joints
+    # 5. Concaténer le contexte et extraire les fichiers joints
     context_parts = []
-    image_paths = []
     attachments: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
-    for doc in ranked_docs:
-        context_parts.append(doc["text"])
+    for doc_idx, doc in enumerate(ranked_docs, start=1):
         meta = doc.get("metadata", {})
-        if meta.get("type") == "image" and meta.get("local_path"):
-            image_paths.append(meta.get("local_path"))
-        
+        doc_title = meta.get("title") or meta.get("attachment_name") or f"Document {doc_idx}"
+        formatted_doc = f"=== DOCUMENT #{doc_idx} [{doc_title}] ===\n{doc['text']}"
+        context_parts.append(formatted_doc)
+
         url = meta.get("attachment_url")
         name = meta.get("attachment_name") or meta.get("title") or "Fichier joint"
         if url and url not in seen_urls:
