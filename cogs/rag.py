@@ -240,35 +240,53 @@ def _build_response_embeds(
         # Titre uniquement sur le premier embed
         if i == 0:
             embed.title = f"💡 {truncated_question}"
-
-        # Footer et pièces jointes uniquement sur le dernier embed
-        if i == len(chunks) - 1:
-            embed.set_footer(text=_truncate(sources_footer, 2048))
-            if attachments:
-                file_links = [
-                    f"📥 **[{att['name']}]({att['url']})**"
-                    for att in attachments
-                ]
-                field_title = "📎 Fichier(s) joint(s) d'origine" if len(attachments) == 1 else f"📎 {len(attachments)} Fichiers joints d'origine"
-                embed.add_field(
-                    name=field_title,
-                    value="\n".join(file_links[:10]),
-                    inline=False,
-                )
-
         embeds.append(embed)
 
-    # Gérer l'affichage visuel des images sources
+    # Footer sur le dernier embed de texte
+    embeds[-1].set_footer(text=_truncate(sources_footer, 2048))
+
+    # Gérer l'affichage des fichiers joints et images sources
     if attachments:
-        image_atts = [att for att in attachments if _is_image_attachment(att["name"], att["url"])]
+        # Numéroter proprement les noms s'il y a des doublons (ex: image.png #1, image.png #2)
+        name_counts: dict[str, int] = {}
+        for att in attachments:
+            n = att["name"]
+            name_counts[n] = name_counts.get(n, 0) + 1
+
+        seen_counts: dict[str, int] = {}
+        formatted_attachments: list[dict[str, str]] = []
+        for att in attachments:
+            n = att["name"]
+            if name_counts[n] > 1:
+                seen_counts[n] = seen_counts.get(n, 0) + 1
+                disp_name = f"{n} (#{seen_counts[n]})"
+            else:
+                disp_name = n
+            formatted_attachments.append({"name": disp_name, "url": att["url"]})
+
+        # Ajouter les liens de téléchargement sur le dernier embed de texte
+        last_embed = embeds[-1]
+        file_links = [
+            f"📥 **[{att['name']}]({att['url']})**"
+            for att in formatted_attachments
+        ]
+        field_title = "📎 Fichier joint d'origine" if len(formatted_attachments) == 1 else f"📎 {len(formatted_attachments)} Fichiers joints d'origine"
+        last_embed.add_field(
+            name=field_title,
+            value="\n".join(file_links[:10]),
+            inline=False,
+        )
+
+        # Affichage visuel des images sources
+        image_atts = [att for att in formatted_attachments if _is_image_attachment(att["name"], att["url"])]
         if image_atts:
-            # La première image est affichée sur l'embed principal
+            # La première image est affichée directement sur l'embed principal
             embeds[0].set_image(url=image_atts[0]["url"])
 
-            # Pour les images supplémentaires (images 2, 3, 4...), créer un embed dédié pour chaque aperçu
-            for att in image_atts[1:5]:
+            # Pour les images 2, 3, 4..., ajouter un sub-embed dans le même message
+            for idx, att in enumerate(image_atts[1:5], start=2):
                 img_embed = discord.Embed(
-                    title=f"🖼️ Source visuelle : {att['name']}",
+                    title=f"🖼️ Image source #{idx} — {att['name']}",
                     color=BLURPLE,
                 )
                 img_embed.set_image(url=att["url"])
@@ -344,10 +362,8 @@ class RAGCog(commands.Cog):
 
             embeds = _build_response_embeds(question, answer, sources_footer, attachments)
 
-            # Envoyer le premier embed en followup, les suivants en messages séparés
-            first_msg = await interaction.followup.send(embed=embeds[0], wait=True)
-            for embed in embeds[1:]:
-                await interaction.followup.send(embed=embed)
+            # Envoyer tous les embeds ensemble dans UN SEUL message unifié
+            first_msg = await interaction.followup.send(embeds=embeds, wait=True)
 
             # Enregistrer le tour dans la mémoire
             self.memory.add_turn(context_id, question, answer)
@@ -423,10 +439,8 @@ class RAGCog(commands.Cog):
 
                 embeds = _build_response_embeds(question, answer, sources_footer, attachments)
 
-                # Répondre en reply au message original
-                reply_msg = await message.reply(embed=embeds[0], mention_author=False)
-                for embed in embeds[1:]:
-                    await message.channel.send(embed=embed)
+                # Répondre avec TOUS les embeds dans un SEUL message unifié
+                reply_msg = await message.reply(embeds=embeds, mention_author=False)
 
                 # Enregistrer le tour dans la mémoire
                 self.memory.add_turn(context_id, question, answer)
