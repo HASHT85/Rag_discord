@@ -245,50 +245,31 @@ def _build_response_embeds(
     # Footer sur le dernier embed de texte
     embeds[-1].set_footer(text=_truncate(sources_footer, 2048))
 
-    # Gérer l'affichage des fichiers joints et images sources
+    # Gérer l'affichage des fichiers joints et aperçus d'images
     if attachments:
-        # Numéroter proprement les noms s'il y a des doublons (ex: image.png #1, image.png #2)
-        name_counts: dict[str, int] = {}
-        for att in attachments:
-            n = att["name"]
-            name_counts[n] = name_counts.get(n, 0) + 1
-
-        seen_counts: dict[str, int] = {}
-        formatted_attachments: list[dict[str, str]] = []
-        for att in attachments:
-            n = att["name"]
-            if name_counts[n] > 1:
-                seen_counts[n] = seen_counts.get(n, 0) + 1
-                disp_name = f"{n} (#{seen_counts[n]})"
-            else:
-                disp_name = n
-            formatted_attachments.append({"name": disp_name, "url": att["url"]})
-
-        # Ajouter les liens de téléchargement sur le dernier embed de texte
+        # 1. Liens de téléchargement clairs (cliquer ouvre l'image/fichier dans le navigateur)
         last_embed = embeds[-1]
         file_links = [
             f"📥 **[{att['name']}]({att['url']})**"
-            for att in formatted_attachments
+            for att in attachments
         ]
-        field_title = "📎 Fichier joint d'origine" if len(formatted_attachments) == 1 else f"📎 {len(formatted_attachments)} Fichiers joints d'origine"
+        field_title = "📎 Fichier joint d'origine" if len(attachments) == 1 else f"📎 {len(attachments)} Fichiers joints d'origine"
         last_embed.add_field(
             name=field_title,
             value="\n".join(file_links[:10]),
             inline=False,
         )
 
-        # Affichage visuel des images sources
-        image_atts = [att for att in formatted_attachments if _is_image_attachment(att["name"], att["url"])]
+        # 2. Aperçus d'images intégrés directement sous l'embed principal (sans titre sous-embed superflu)
+        image_atts = [att for att in attachments if _is_image_attachment(att["name"], att["url"])]
         if image_atts:
-            # La première image est affichée directement sur l'embed principal
-            embeds[0].set_image(url=image_atts[0]["url"])
+            shared_url = image_atts[0]["url"]
+            embeds[0].url = shared_url
+            embeds[0].set_image(url=shared_url)
 
-            # Pour les images 2, 3, 4..., ajouter un sub-embed dans le même message
-            for idx, att in enumerate(image_atts[1:5], start=2):
-                img_embed = discord.Embed(
-                    title=f"🖼️ Image source #{idx} — {att['name']}",
-                    color=BLURPLE,
-                )
+            # Pour les images 2, 3, 4..., lier les images via la même URL d'embed pour un rendu galerie natif sans sous-titre
+            for att in image_atts[1:4]:
+                img_embed = discord.Embed(url=shared_url, color=BLURPLE)
                 img_embed.set_image(url=att["url"])
                 embeds.append(img_embed)
 
